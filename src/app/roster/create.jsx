@@ -8,7 +8,6 @@ import {
   TextInput,
   ActivityIndicator,
   Alert,
-  Platform,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
@@ -26,94 +25,9 @@ import {
 } from "lucide-react-native";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Calendar } from "react-native-calendars";
 import KeyboardAvoidingAnimatedView from "@/components/KeyboardAvoidingAnimatedView";
+import { DatePickerModal, formatDisplayDate } from "@/components/DatePicker";
 import { apiGetJson, apiPostJson } from "@/utils/api";
-
-function formatDisplayDate(iso) {
-  if (!iso) return "";
-  const d = new Date(iso + "T00:00:00");
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-}
-
-function DatePickerModal({ visible, label, value, minDate, onSelect, onClose }) {
-  return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable
-        style={{
-          flex: 1,
-          backgroundColor: "rgba(0,0,0,0.45)",
-          justifyContent: "center",
-          alignItems: "center",
-        }}
-        onPress={onClose}
-      >
-        <Pressable
-          style={{
-            width: "90%",
-            maxWidth: 380,
-            backgroundColor: "#fff",
-            borderRadius: 20,
-            overflow: "hidden",
-            ...Platform.select({
-              ios: {
-                shadowColor: "#000",
-                shadowOpacity: 0.18,
-                shadowRadius: 14,
-                shadowOffset: { width: 0, height: 6 },
-              },
-              android: { elevation: 12 },
-            }),
-          }}
-          onPress={(e) => e.stopPropagation()}
-        >
-          <View
-            style={{
-              flexDirection: "row",
-              justifyContent: "space-between",
-              alignItems: "center",
-              paddingHorizontal: 18,
-              paddingTop: 16,
-              paddingBottom: 8,
-            }}
-          >
-            <Text style={{ fontSize: 17, fontWeight: "700", color: "#000" }}>{label}</Text>
-            <TouchableOpacity onPress={onClose}>
-              <X size={22} color="#8E8E93" />
-            </TouchableOpacity>
-          </View>
-          {visible ? (
-            <Calendar
-              current={value || undefined}
-              minDate={minDate || undefined}
-              markedDates={
-                value ? { [value]: { selected: true, selectedColor: "#007AFF" } } : {}
-              }
-              onDayPress={(day) => {
-                const ds = day?.dateString;
-                if (!ds) return;
-                onSelect(ds);
-                onClose();
-              }}
-              theme={{
-                todayTextColor: "#007AFF",
-                arrowColor: "#007AFF",
-                textDayFontSize: 15,
-                textMonthFontSize: 16,
-              }}
-            />
-          ) : null}
-          <View style={{ height: 16 }} />
-        </Pressable>
-      </Pressable>
-    </Modal>
-  );
-}
 
 function PickerRow({ icon: Icon, label, value, placeholder, onPress, disabled }) {
   return (

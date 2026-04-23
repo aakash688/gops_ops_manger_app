@@ -22,7 +22,7 @@ import {
 } from "lucide-react-native";
 import { useRouter } from "expo-router";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { Calendar as RNCalendar } from "react-native-calendars";
+import { DatePickerModal, formatDisplayDate } from "@/components/DatePicker";
 import { apiGetJson } from "@/utils/api";
 
 function weekBoundsFromDate(d) {
@@ -31,91 +31,6 @@ function weekBoundsFromDate(d) {
   const end = new Date(start);
   end.setDate(end.getDate() + 6);
   return [start.toISOString().split("T")[0], end.toISOString().split("T")[0]];
-}
-
-function formatDisplayDate(iso) {
-  if (!iso) return "";
-  const x = new Date(iso + "T00:00:00");
-  if (Number.isNaN(x.getTime())) return iso;
-  return x.toLocaleDateString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-}
-
-function DatePickerModal({ visible, label, value, minDate, onSelect, onClose }) {
-  return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable
-        style={{
-          flex: 1,
-          backgroundColor: "rgba(0,0,0,0.45)",
-          justifyContent: "center",
-          alignItems: "center",
-        }}
-        onPress={onClose}
-      >
-        <Pressable
-          style={{
-            width: "90%",
-            maxWidth: 380,
-            backgroundColor: "#fff",
-            borderRadius: 20,
-            overflow: "hidden",
-            ...Platform.select({
-              ios: {
-                shadowColor: "#000",
-                shadowOpacity: 0.18,
-                shadowRadius: 14,
-                shadowOffset: { width: 0, height: 6 },
-              },
-              android: { elevation: 12 },
-            }),
-          }}
-          onPress={(e) => e.stopPropagation()}
-        >
-          <View
-            style={{
-              flexDirection: "row",
-              justifyContent: "space-between",
-              alignItems: "center",
-              paddingHorizontal: 18,
-              paddingTop: 16,
-              paddingBottom: 8,
-            }}
-          >
-            <Text style={{ fontSize: 17, fontWeight: "700", color: "#000" }}>{label}</Text>
-            <TouchableOpacity onPress={onClose}>
-              <Text style={{ fontSize: 22, color: "#8E8E93" }}>×</Text>
-            </TouchableOpacity>
-          </View>
-          {visible ? (
-            <RNCalendar
-              current={value || undefined}
-              minDate={minDate || undefined}
-              markedDates={
-                value ? { [value]: { selected: true, selectedColor: "#007AFF" } } : {}
-              }
-              onDayPress={(day) => {
-                const ds = day?.dateString;
-                if (!ds) return;
-                onSelect(ds);
-                onClose();
-              }}
-              theme={{
-                todayTextColor: "#007AFF",
-                arrowColor: "#007AFF",
-                textDayFontSize: 15,
-                textMonthFontSize: 16,
-              }}
-            />
-          ) : null}
-          <View style={{ height: 16 }} />
-        </Pressable>
-      </Pressable>
-    </Modal>
-  );
 }
 
 export default function Roster() {

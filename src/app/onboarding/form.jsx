@@ -13,17 +13,9 @@ import {
   KeyboardAvoidingView,
 } from "react-native";
 import StackScreen from "@/components/StackScreen";
+import { DatePickerModal, todayYmdLocal } from "@/components/DatePicker";
 import { apiGetJson, apiPostJson } from "@/utils/api";
 import { ChevronRight, Search, X, CalendarDays, UserRound } from "lucide-react-native";
-import { Calendar } from "react-native-calendars";
-
-function todayYmdLocal() {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = d.getMonth() + 1;
-  const day = d.getDate();
-  return `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-}
 
 function toYmdFromInput(s) {
   // Accept YYYY-MM-DD only (backend requires this)
@@ -97,67 +89,6 @@ const styles = StyleSheet.create({
   },
   primaryBtnText: { fontSize: 17, fontWeight: "600", color: "#FFFFFF" },
 });
-
-function DatePickerModal({ visible, title, value, onPick, onClose }) {
-  const selected = value || todayYmdLocal();
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    if (visible) setMounted(true);
-  }, [visible]);
-
-  return (
-    <Modal visible={visible} animationType="slide" presentationStyle={Platform.OS === "ios" ? "pageSheet" : "fullScreen"}>
-      <View style={{ flex: 1, backgroundColor: "#F2F2F7" }}>
-        <View
-          style={{
-            paddingTop: 16,
-            paddingHorizontal: 16,
-            paddingBottom: 12,
-            flexDirection: "row",
-            alignItems: "center",
-            borderBottomWidth: StyleSheet.hairlineWidth,
-            borderBottomColor: "rgba(0,0,0,0.08)",
-          }}
-        >
-          <TouchableOpacity onPress={onClose} style={{ paddingVertical: 4, paddingRight: 10 }}>
-            <Text style={{ fontSize: 17, color: "#007AFF" }}>Close</Text>
-          </TouchableOpacity>
-          <Text style={{ fontSize: 17, fontWeight: "600", color: "#000", flex: 1, textAlign: "center" }}>{title}</Text>
-          <View style={{ width: 60 }} />
-        </View>
-
-        <View style={{ padding: 16 }}>
-          {!mounted ? (
-            <ActivityIndicator color="#007AFF" style={{ marginTop: 24 }} />
-          ) : (
-            <View style={[styles.card, { padding: 10 }]}>
-              <Calendar
-                current={selected}
-                markedDates={{
-                  [selected]: { selected: true, selectedColor: "#007AFF", selectedTextColor: "#FFF" },
-                }}
-                onDayPress={(d) => {
-                  onPick(d.dateString);
-                  onClose();
-                }}
-                theme={{
-                  backgroundColor: "#FFFFFF",
-                  calendarBackground: "#FFFFFF",
-                  textSectionTitleColor: "#8E8E93",
-                  todayTextColor: "#007AFF",
-                  dayTextColor: "#1C1C1E",
-                  monthTextColor: "#1C1C1E",
-                  arrowColor: "#007AFF",
-                }}
-              />
-            </View>
-          )}
-        </View>
-      </View>
-    </Modal>
-  );
-}
 
 function GenderModal({ visible, value, onPick, onClose }) {
   const options = ["Male", "Female", "Other"];
@@ -551,9 +482,12 @@ export default function OnboardingFormScreen() {
       />
       <DatePickerModal
         visible={pickDobOpen}
-        title="Select date of birth"
-        value={dateOfBirth}
-        onPick={(v) => setDateOfBirth(v)}
+        label="Select date of birth"
+        birthdatePicker
+        value={dateOfBirth || undefined}
+        minDate={`${new Date().getFullYear() - 100}-01-01`}
+        maxDate={todayYmdLocal()}
+        onSelect={(v) => setDateOfBirth(v)}
         onClose={() => setPickDobOpen(false)}
       />
     </StackScreen>

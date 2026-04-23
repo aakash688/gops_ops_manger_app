@@ -58,15 +58,20 @@ export default function Dashboard() {
 
   const fetchDashboardData = async () => {
     try {
-      const [{ data: statsData }, { data: teamLatest }] = await Promise.all([
+      const [{ data: statsData }, { data: teamLatest }, leaveRes] = await Promise.all([
         apiGetJson("/dashboard"),
         apiGetJson("/apps/live-tracking/team/latest"),
+        apiGetJson("/leave-requests?status=PENDING&limit=1&offset=0").catch(() => ({ meta: null })),
       ]);
+
+      const pendingLeaves = leaveRes?.meta?.pagination?.total;
+      const pendingLeavesNum =
+        typeof pendingLeaves === "number" ? pendingLeaves : Number(pendingLeaves) || 0;
 
       setStats({
         present: statsData?.employeesCount ?? 0,
         absent: 0,
-        pendingLeaves: 0,
+        pendingLeaves: pendingLeavesNum,
         activeSites: statsData?.clientsCount ?? 0,
         openTickets: statsData?.openTicketsCount ?? 0,
       });

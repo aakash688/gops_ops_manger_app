@@ -5,158 +5,17 @@ import {
   TouchableOpacity,
   ScrollView,
   Alert,
-  Modal,
-  Pressable,
-  Platform,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect";
-import { ArrowLeft, Calendar as CalendarIcon, X } from "lucide-react-native";
+import { ArrowLeft } from "lucide-react-native";
 import { useRouter } from "expo-router";
 import { useState } from "react";
-import { Calendar } from "react-native-calendars";
 import KeyboardAvoidingAnimatedView from "@/components/KeyboardAvoidingAnimatedView";
 import ClientPickerModal from "@/components/ClientPickerModal";
+import { DatePickerField } from "@/components/DatePicker";
 import { apiPostJson } from "@/utils/api";
-
-function formatDisplayDate(iso) {
-  if (!iso) return "";
-  const d = new Date(iso + "T00:00:00");
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-}
-
-function DatePickerField({ label, value, onSelect, minDate, placeholder }) {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <>
-      <View style={{ marginBottom: 20 }}>
-        <Text
-          style={{
-            fontSize: 15,
-            fontWeight: "600",
-            color: "#000",
-            marginBottom: 8,
-          }}
-        >
-          {label}
-        </Text>
-        <TouchableOpacity activeOpacity={0.7} onPress={() => setOpen(true)}>
-          <GlassView
-            style={[
-              {
-                paddingHorizontal: 16,
-                paddingVertical: 14,
-                borderRadius: 12,
-                overflow: "hidden",
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "space-between",
-              },
-              isLiquidGlassAvailable()
-                ? {}
-                : { opacity: 0.95, backgroundColor: "#ffffff" },
-            ]}
-          >
-            <Text style={{ fontSize: 16, color: value ? "#000" : "#999", flex: 1 }}>
-              {value ? formatDisplayDate(value) : placeholder || "Select date"}
-            </Text>
-            <CalendarIcon size={20} color="#8E8E93" />
-          </GlassView>
-        </TouchableOpacity>
-      </View>
-
-      <Modal
-        visible={open}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setOpen(false)}
-      >
-        <Pressable
-          style={{
-            flex: 1,
-            backgroundColor: "rgba(0,0,0,0.45)",
-            justifyContent: "center",
-            alignItems: "center",
-          }}
-          onPress={() => setOpen(false)}
-        >
-          <Pressable
-            style={{
-              width: "90%",
-              maxWidth: 380,
-              backgroundColor: "#fff",
-              borderRadius: 20,
-              overflow: "hidden",
-              ...Platform.select({
-                ios: { shadowColor: "#000", shadowOpacity: 0.18, shadowRadius: 14, shadowOffset: { width: 0, height: 6 } },
-                android: { elevation: 12 },
-              }),
-            }}
-            onPress={(e) => e.stopPropagation()}
-          >
-            <View
-              style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                alignItems: "center",
-                paddingHorizontal: 18,
-                paddingTop: 16,
-                paddingBottom: 8,
-              }}
-            >
-              <Text style={{ fontSize: 17, fontWeight: "700", color: "#000" }}>
-                {label}
-              </Text>
-              <TouchableOpacity onPress={() => setOpen(false)}>
-                <X size={22} color="#8E8E93" />
-              </TouchableOpacity>
-            </View>
-
-            {open ? (
-              <Calendar
-                current={value || undefined}
-                minDate={minDate || undefined}
-                markedDates={
-                  value
-                    ? { [value]: { selected: true, selectedColor: "#007AFF" } }
-                    : {}
-                }
-                onDayPress={(day) => {
-                  const ds = day?.dateString;
-                  if (!ds) return;
-                  onSelect(ds);
-                  setOpen(false);
-                }}
-                theme={{
-                  todayTextColor: "#007AFF",
-                  arrowColor: "#007AFF",
-                  textDayFontSize: 15,
-                  textMonthFontSize: 16,
-                  textDayHeaderFontSize: 13,
-                  textDayFontWeight: "500",
-                  textMonthFontWeight: "700",
-                  "stylesheet.calendar.header": {
-                    dayTextAtIndex0: { color: "#C62828" },
-                    dayTextAtIndex6: { color: "#C62828" },
-                  },
-                }}
-              />
-            ) : null}
-
-            <View style={{ height: 16 }} />
-          </Pressable>
-        </Pressable>
-      </Modal>
-    </>
-  );
-}
 
 export default function CreateRelieverRequest() {
   const insets = useSafeAreaInsets();
@@ -277,17 +136,19 @@ export default function CreateRelieverRequest() {
         <DatePickerField
           label="Start Date *"
           value={startDate}
-          onSelect={setStartDate}
+          onChange={setStartDate}
           minDate={today}
           placeholder="Select start date"
+          marginBottom={20}
         />
 
         <DatePickerField
           label="End Date *"
           value={endDate}
-          onSelect={setEndDate}
+          onChange={setEndDate}
           minDate={startDate || today}
           placeholder="Select end date"
+          marginBottom={20}
         />
 
         {/* Relievers Needed */}
