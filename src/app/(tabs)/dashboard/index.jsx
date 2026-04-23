@@ -2,7 +2,6 @@ import {
   View,
   Text,
   ScrollView,
-  TouchableOpacity,
   Pressable,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -10,7 +9,6 @@ import { StatusBar } from "expo-status-bar";
 import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect";
 import {
   Users,
-  UserX,
   Calendar,
   Building2,
   Ticket,
@@ -18,7 +16,6 @@ import {
   DollarSign,
   AlertCircle,
   FileText,
-  Bell,
   ChevronRight,
   AlertTriangle,
   ClipboardList,
@@ -26,13 +23,10 @@ import {
   UserPlus,
   MapPinned,
   GraduationCap,
-  LogIn,
   List,
   Radio,
-  ShieldCheck,
 } from "lucide-react-native";
 import { useRouter } from "expo-router";
-import FloatingActionButton from "@/components/FloatingActionButton";
 import { useState, useEffect } from "react";
 import { apiGetJson } from "@/utils/api";
 import { useAuthStore } from "@/utils/auth/store";
@@ -41,14 +35,12 @@ export default function Dashboard() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const [stats, setStats] = useState({
-    present: 0,
-    absent: 0,
+    employeesCount: 0,
+    clientsCount: 0,
     pendingLeaves: 0,
-    activeSites: 0,
-    openTickets: 0,
+    openTicketsCount: 0,
   });
   const [alerts, setAlerts] = useState([]);
-  const [loading, setLoading] = useState(true);
   const employeeId = useAuthStore((s) => s.auth?.user?.employeeId);
   const [tracking, setTracking] = useState({ trackedAt: null, sessionOpen: false });
 
@@ -58,22 +50,23 @@ export default function Dashboard() {
 
   const fetchDashboardData = async () => {
     try {
-      const [{ data: statsData }, { data: teamLatest }, leaveRes] = await Promise.all([
+      const [{ data: dashData }, { data: teamLatest }, leaveRes] = await Promise.all([
         apiGetJson("/dashboard"),
         apiGetJson("/apps/live-tracking/team/latest"),
-        apiGetJson("/leave-requests?status=PENDING&limit=1&offset=0").catch(() => ({ meta: null })),
+        apiGetJson("/leave-requests?limit=1&offset=0").catch(() => ({ data: [], meta: {} })),
       ]);
 
-      const pendingLeaves = leaveRes?.meta?.pagination?.total;
+      const pendingFromStats = leaveRes?.meta?.stats?.pending;
       const pendingLeavesNum =
-        typeof pendingLeaves === "number" ? pendingLeaves : Number(pendingLeaves) || 0;
+        typeof pendingFromStats === "number"
+          ? pendingFromStats
+          : Number(leaveRes?.meta?.pagination?.total) || 0;
 
       setStats({
-        present: statsData?.employeesCount ?? 0,
-        absent: 0,
+        employeesCount: dashData?.employeesCount ?? 0,
+        clientsCount: dashData?.clientsCount ?? 0,
         pendingLeaves: pendingLeavesNum,
-        activeSites: statsData?.clientsCount ?? 0,
-        openTickets: statsData?.openTicketsCount ?? 0,
+        openTicketsCount: dashData?.openTicketsCount ?? 0,
       });
 
       const me = Array.isArray(teamLatest) && employeeId
@@ -82,14 +75,11 @@ export default function Dashboard() {
       setTracking({ trackedAt: me?.trackedAt ?? null, sessionOpen: me?.sessionOpen === true });
     } catch {
       setStats({
-        present: 42,
-        absent: 8,
-        pendingLeaves: 5,
-        activeSites: 6,
-        openTickets: 3,
+        employeesCount: 0,
+        clientsCount: 0,
+        pendingLeaves: 0,
+        openTicketsCount: 0,
       });
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -294,45 +284,18 @@ export default function Dashboard() {
             paddingBottom: 20,
           }}
         >
-          <View
-            style={{
-              flexDirection: "row",
-              justifyContent: "space-between",
-              alignItems: "center",
-            }}
-          >
-            <View>
-              <Text style={{ fontSize: 14, color: "#666" }}>Welcome back,</Text>
-              <Text
-                style={{
-                  fontSize: 28,
-                  fontWeight: "700",
-                  color: "#000",
-                  marginTop: 4,
-                }}
-              >
-                Operations Manager
-              </Text>
-            </View>
-            <TouchableOpacity
-              onPress={() => router.push("/dashboard/notifications")}
-              style={{ padding: 8 }}
+          <View>
+            <Text style={{ fontSize: 14, color: "#666" }}>Welcome back,</Text>
+            <Text
+              style={{
+                fontSize: 28,
+                fontWeight: "700",
+                color: "#000",
+                marginTop: 4,
+              }}
             >
-              <View style={{ position: "relative" }}>
-                <Bell size={24} color="#000" />
-                <View
-                  style={{
-                    position: "absolute",
-                    top: 0,
-                    right: 0,
-                    width: 8,
-                    height: 8,
-                    borderRadius: 4,
-                    backgroundColor: "#FF3B30",
-                  }}
-                />
-              </View>
-            </TouchableOpacity>
+              Operations Manager
+            </Text>
           </View>
         </View>
 
@@ -347,22 +310,8 @@ export default function Dashboard() {
             borderBottomColor: "rgba(0,122,255,0.12)",
           }}
         >
-          <Text
-            style={{
-              fontSize: 12,
-              fontWeight: "800",
-              color: "#007AFF",
-              letterSpacing: 0.8,
-              marginBottom: 6,
-            }}
-          >
-            FIELD COMMAND CENTER
-          </Text>
-          <Text style={{ fontSize: 20, fontWeight: "800", color: "#000", marginBottom: 4 }}>
-            All modules
-          </Text>
-          <Text style={{ fontSize: 14, color: "#3C3C43", marginBottom: 14 }}>
-            One tap to roster, remote check-in, approvals, training, and more.
+          <Text style={{ fontSize: 20, fontWeight: "800", color: "#000", marginBottom: 14 }}>
+            Shortcuts
           </Text>
 
           <Text style={{ fontSize: 13, fontWeight: "700", color: "#8E8E93", marginBottom: 8 }}>
@@ -543,27 +492,6 @@ export default function Dashboard() {
             />
           </View>
 
-          <Text style={{ fontSize: 13, fontWeight: "700", color: "#8E8E93", marginBottom: 8 }}>
-            ACCOUNT
-          </Text>
-          <View
-            style={{
-              flexDirection: "row",
-              flexWrap: "wrap",
-              marginHorizontal: -6,
-            }}
-          >
-            <QuickAction
-              icon={LogIn}
-              label="Login / SSO"
-              onPress={() => router.push("/login")}
-            />
-            <QuickAction
-              icon={ShieldCheck}
-              label="Notifications"
-              onPress={() => router.push("/dashboard/notifications")}
-            />
-          </View>
         </View>
 
         {/* Action-Based Alerts - NEW PRIORITY */}
@@ -604,7 +532,10 @@ export default function Dashboard() {
               marginBottom: 12,
             }}
           >
-            Today's Overview
+            Org overview
+          </Text>
+          <Text style={{ fontSize: 13, color: "#8E8E93", marginBottom: 14, marginTop: -6 }}>
+            Live counts from your organization (dashboard & leave APIs).
           </Text>
           <View
             style={{
@@ -615,37 +546,15 @@ export default function Dashboard() {
           >
             <StatCard
               icon={Users}
-              label="Present"
-              value={stats.present}
+              label="Staff in org"
+              value={stats.employeesCount}
               color="#34C759"
               onPress={() => router.push("/attendance")}
             />
             <StatCard
-              icon={UserX}
-              label="Absent"
-              value={stats.absent}
-              color="#FF3B30"
-              onPress={() => router.push("/attendance")}
-            />
-          </View>
-          <View
-            style={{
-              flexDirection: "row",
-              flexWrap: "wrap",
-              marginHorizontal: -6,
-            }}
-          >
-            <StatCard
-              icon={Calendar}
-              label="Pending Leaves"
-              value={stats.pendingLeaves}
-              color="#FF9500"
-              onPress={() => router.push("/leave-approval")}
-            />
-            <StatCard
               icon={Building2}
-              label="Active Sites"
-              value={stats.activeSites}
+              label="Clients"
+              value={stats.clientsCount}
               color="#007AFF"
               onPress={() => router.push("/clients")}
             />
@@ -658,18 +567,22 @@ export default function Dashboard() {
             }}
           >
             <StatCard
+              icon={Calendar}
+              label="Pending leave"
+              value={stats.pendingLeaves}
+              color="#FF9500"
+              onPress={() => router.push("/leave-approval")}
+            />
+            <StatCard
               icon={Ticket}
-              label="Open Tickets"
-              value={stats.openTickets}
+              label="Open tickets"
+              value={stats.openTicketsCount}
               color="#AF52DE"
               onPress={() => router.push("/tickets")}
             />
-            <View style={{ flex: 1, margin: 6 }} />
           </View>
         </View>
       </ScrollView>
-
-      <FloatingActionButton />
     </View>
   );
 }

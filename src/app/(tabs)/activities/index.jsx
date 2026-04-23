@@ -18,7 +18,6 @@ import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect";
 import { Search, MapPin, Clock, ChevronRight, Tag, ChevronDown } from "lucide-react-native";
 import { useRouter } from "expo-router";
 import { useState, useEffect, useCallback, useMemo } from "react";
-import FloatingActionButton from "@/components/FloatingActionButton";
 import { apiGetJson } from "@/utils/api";
 import { filterImageUrls, priorityAccent, statusAccent, formatActivityTime } from "@/utils/activityStyles";
 
@@ -336,8 +335,6 @@ export default function Activities() {
         }
         showsVerticalScrollIndicator={false}
       />
-
-      <FloatingActionButton />
     </View>
   );
 }

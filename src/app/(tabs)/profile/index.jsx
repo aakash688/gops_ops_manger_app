@@ -3,7 +3,6 @@ import {
   Text,
   ScrollView,
   Pressable,
-  Switch,
   ActivityIndicator,
   Modal,
   Alert,
@@ -16,9 +15,7 @@ import { StatusBar } from "expo-status-bar";
 import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect";
 import {
   Building2,
-  Settings,
   LogOut,
-  Fingerprint,
   ChevronRight,
   LogIn,
   GraduationCap,
@@ -30,7 +27,6 @@ import { useRouter } from "expo-router";
 import { useState, useCallback, useRef, useMemo } from "react";
 import { useFocusEffect } from "@react-navigation/native";
 import * as SecureStore from "expo-secure-store";
-import FloatingActionButton from "@/components/FloatingActionButton";
 import { useAuthStore, authKey } from "@/utils/auth/store";
 import { apiGetJson, apiPostJson } from "@/utils/api";
 import {
@@ -68,7 +64,6 @@ export default function Profile() {
   const router = useRouter();
   const auth = useAuthStore((s) => s.auth);
   const setAuth = useAuthStore((s) => s.setAuth);
-  const [biometricEnabled, setBiometricEnabled] = useState(false);
   const [me, setMe] = useState(null);
   const [meLoading, setMeLoading] = useState(true);
   const [meError, setMeError] = useState(null);
@@ -549,26 +544,6 @@ export default function Profile() {
             onPress={() => router.push("/training")}
           />
 
-          <MenuItem
-            icon={Fingerprint}
-            label="Biometric unlock"
-            onPress={() => {}}
-            rightElement={
-              <Switch
-                value={biometricEnabled}
-                onValueChange={setBiometricEnabled}
-                trackColor={{ false: "#E5E5EA", true: "#34C759" }}
-                thumbColor="#FFFFFF"
-              />
-            }
-          />
-
-          <MenuItem
-            icon={Settings}
-            label="App settings"
-            onPress={() => router.push("/settings")}
-          />
-
           <Pressable
             onPress={handleLogout}
             style={({ pressed }) => ({
@@ -619,8 +594,6 @@ export default function Profile() {
           <Text style={{ fontSize: 13, color: "#999" }}>Version 1.0.0</Text>
         </View>
       </ScrollView>
-
-      <FloatingActionButton />
     </View>
   );
 }

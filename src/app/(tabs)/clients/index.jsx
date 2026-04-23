@@ -13,7 +13,6 @@ import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect";
 import { Search, MapPin, ChevronRight, Users } from "lucide-react-native";
 import { useRouter } from "expo-router";
 import { useState, useEffect, useCallback } from "react";
-import FloatingActionButton from "@/components/FloatingActionButton";
 import { apiGetJson } from "@/utils/api";
 
 function formatDate(d) {
@@ -228,8 +227,6 @@ export default function Clients() {
           </Text>
         ) : null}
       </ScrollView>
-
-      <FloatingActionButton />
     </View>
   );
 }
