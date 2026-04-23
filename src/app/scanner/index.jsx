@@ -3,12 +3,14 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { useState } from "react";
+import { useLocalSearchParams } from "expo-router";
 import { useRouter } from "expo-router";
 import { X, Flashlight, FlashlightOff } from "lucide-react-native";
 
 export default function Scanner() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const params = useLocalSearchParams();
   const [permission, requestPermission] = useCameraPermissions();
   const [torchOn, setTorchOn] = useState(false);
   const [scanned, setScanned] = useState(false);
@@ -62,7 +64,13 @@ export default function Scanner() {
     setScanned(true);
 
     try {
-      // Resolve QR code to get employee info
+      // Mode: field check-in site QR (return token back to /remote-checkin)
+      if (params?.mode === "field-checkin") {
+        router.replace({ pathname: "/remote-checkin", params: { qrToken: String(data) } });
+        return;
+      }
+
+      // Default: legacy employee QR flow (kept as-is)
       const response = await fetch(`/api/qr/resolve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

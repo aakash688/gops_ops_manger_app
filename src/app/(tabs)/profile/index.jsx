@@ -33,6 +33,10 @@ import * as SecureStore from "expo-secure-store";
 import FloatingActionButton from "@/components/FloatingActionButton";
 import { useAuthStore, authKey } from "@/utils/auth/store";
 import { apiGetJson, apiPostJson } from "@/utils/api";
+import {
+  stopLiveTracking,
+  syncLiveTrackingWithFieldSession,
+} from "@/services/liveTracking";
 
 function resolveOrgId(org) {
   if (!org) return "";
@@ -87,10 +91,21 @@ export default function Profile() {
       const { data } = await apiGetJson("/apps/auth/me");
       setMe(data);
       const latest = useAuthStore.getState().auth;
-      if (latest?.jwt && Array.isArray(data?.organizations)) {
-        const merged = mergeOrgLists(data.organizations, latest.organizations);
-        if (merged.length > 0) {
-          const next = { ...latest, organizations: merged };
+      if (latest?.jwt) {
+        let next = latest;
+        if (data?.employee?.id && !latest.user?.employeeId) {
+          next = {
+            ...next,
+            user: { ...next.user, employeeId: data.employee.id },
+          };
+        }
+        if (Array.isArray(data?.organizations)) {
+          const merged = mergeOrgLists(data.organizations, next.organizations);
+          if (merged.length > 0) {
+            next = { ...next, organizations: merged };
+          }
+        }
+        if (next !== latest) {
           await SecureStore.setItemAsync(authKey, JSON.stringify(next));
           useAuthStore.setState({ auth: next });
         }
@@ -111,7 +126,12 @@ export default function Profile() {
     }, [loadProfile, auth?.jwt]),
   );
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await stopLiveTracking();
+    } catch {
+      /* still log out */
+    }
     setAuth(null);
     router.replace("/");
   };
@@ -142,12 +162,21 @@ export default function Profile() {
           email: authNow?.user?.email || me?.employee?.email,
           orgName: data.active_organization?.name ?? "",
           orgId: data.active_organization?.id ?? orgId,
+          employeeId: me?.employee?.id || authNow?.user?.employeeId || "",
         },
         organizations: mergeOrgLists(me?.organizations, authNow?.organizations),
       };
+      try {
+        await stopLiveTracking();
+      } catch {
+        /* continue org switch */
+      }
       await SecureStore.setItemAsync(authKey, JSON.stringify(nextAuth));
       useAuthStore.setState({ auth: nextAuth });
       setOrgPickerOpen(false);
+      if (Platform.OS !== "web") {
+        await syncLiveTrackingWithFieldSession();
+      }
       await loadProfile(true);
       Alert.alert(
         "Organization updated",

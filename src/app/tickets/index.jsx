@@ -4,6 +4,7 @@ import {
   ScrollView,
   Pressable,
   TouchableOpacity,
+  RefreshControl,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
@@ -16,12 +17,16 @@ import {
 } from "lucide-react-native";
 import { useRouter } from "expo-router";
 import { useState, useEffect } from "react";
+import { apiGetJson } from "@/utils/api";
 
 export default function Tickets() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const [tickets, setTickets] = useState([]);
   const [filter, setFilter] = useState("ALL"); // ALL, OPEN, CLOSED
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     fetchTickets();
@@ -29,53 +34,50 @@ export default function Tickets() {
 
   const fetchTickets = async () => {
     try {
-      const response = await fetch("/api/tickets");
-      if (!response.ok) throw new Error("Failed to fetch");
-      const data = await response.json();
-      setTickets(data);
+      setError(null);
+      setLoading(true);
+      const params = new URLSearchParams();
+      params.set("limit", "50");
+      params.set("offset", "0");
+      if (filter === "OPEN") params.set("status", "OPEN");
+      if (filter === "CLOSED") params.set("status", "CLOSED");
+
+      const { data } = await apiGetJson(`/tickets?${params.toString()}`);
+      setTickets(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error(error);
-      // Demo data
-      setTickets([
-        {
-          id: 1,
-          title: "Camera not working",
-          status: "OPEN",
-          priority: "HIGH",
-          site: "Warehouse 2",
-          createdAt: "2 hours ago",
-        },
-        {
-          id: 2,
-          title: "Gate lock broken",
-          status: "OPEN",
-          priority: "CRITICAL",
-          site: "Office Complex",
-          createdAt: "5 hours ago",
-        },
-        {
-          id: 3,
-          title: "Uniform request",
-          status: "CLOSED",
-          priority: "LOW",
-          site: "Mall Entrance",
-          createdAt: "1 day ago",
-        },
-      ]);
+      setTickets([]);
+      setError(error instanceof Error ? error.message : "Failed to load tickets");
+    } finally {
+      setLoading(false);
     }
   };
+
+  useEffect(() => {
+    fetchTickets();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filter]);
 
   const filteredTickets = tickets.filter((ticket) => {
     if (filter === "ALL") return true;
     return ticket.status === filter;
   });
 
+  const formatAgo = (value) => {
+    if (!value) return "—";
+    const t = new Date(value).getTime();
+    if (Number.isNaN(t)) return "—";
+    const sec = Math.max(0, Math.round((Date.now() - t) / 1000));
+    if (sec < 60) return `${sec}s ago`;
+    if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+    if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+    return `${Math.floor(sec / 86400)}d ago`;
+  };
+
   const getPriorityColor = (priority) => {
     switch (priority) {
-      case "CRITICAL":
-        return "#FF3B30";
       case "HIGH":
-        return "#FF9500";
+        return "#FF3B30";
       case "MEDIUM":
         return "#007AFF";
       case "LOW":
@@ -147,14 +149,23 @@ export default function Tickets() {
                   paddingVertical: 4,
                   borderRadius: 6,
                   backgroundColor:
-                    ticket.status === "OPEN" ? "#007AFF20" : "#34C75920",
+                    ticket.status === "OPEN"
+                      ? "#007AFF20"
+                      : ticket.status === "CLOSED"
+                        ? "#34C75920"
+                        : "#FF950020",
                 }}
               >
                 <Text
                   style={{
                     fontSize: 12,
                     fontWeight: "600",
-                    color: ticket.status === "OPEN" ? "#007AFF" : "#34C759",
+                    color:
+                      ticket.status === "OPEN"
+                        ? "#007AFF"
+                        : ticket.status === "CLOSED"
+                          ? "#34C759"
+                          : "#FF9500",
                   }}
                 >
                   {ticket.status}
@@ -171,11 +182,14 @@ export default function Tickets() {
             >
               {ticket.title}
             </Text>
-            <Text style={{ fontSize: 14, color: "#666", marginBottom: 4 }}>
-              {ticket.site}
-            </Text>
+            {!!ticket.siteName && (
+              <Text style={{ fontSize: 14, color: "#666", marginBottom: 4 }}>
+                {ticket.siteName}
+              </Text>
+            )}
             <Text style={{ fontSize: 13, color: "#999" }}>
-              {ticket.createdAt}
+              {ticket.ticketId ? `${ticket.ticketId} • ` : ""}
+              {formatAgo(ticket.createdAt)}
             </Text>
           </View>
           <ChevronRight size={20} color="#C7C7CC" />
@@ -273,8 +287,29 @@ export default function Tickets() {
           paddingBottom: insets.bottom + 100,
         }}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={async () => {
+              setRefreshing(true);
+              await fetchTickets();
+              setRefreshing(false);
+            }}
+          />
+        }
       >
-        {filteredTickets.length === 0 ? (
+        {loading ? (
+          <View style={{ alignItems: "center", paddingTop: 60 }}>
+            <Text style={{ fontSize: 16, color: "#666" }}>Loading…</Text>
+          </View>
+        ) : error ? (
+          <View style={{ alignItems: "center", paddingTop: 60 }}>
+            <AlertCircle size={48} color="#FF3B30" />
+            <Text style={{ fontSize: 16, color: "#FF3B30", marginTop: 16 }}>
+              {error}
+            </Text>
+          </View>
+        ) : filteredTickets.length === 0 ? (
           <View style={{ alignItems: "center", paddingTop: 60 }}>
             <AlertCircle size={48} color="#C7C7CC" />
             <Text style={{ fontSize: 16, color: "#666", marginTop: 16 }}>

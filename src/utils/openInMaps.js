@@ -34,12 +34,24 @@ export async function openMapsDirections(fromLat, fromLng, toLat, toLng) {
     Alert.alert("Directions", "Turn on location and pick a site on the map.");
     return;
   }
-  const url =
-    Platform.OS === "ios"
-      ? `http://maps.apple.com/?saddr=${fa},${fl}&daddr=${ta},${tl}`
-      : `https://www.google.com/maps/dir/?api=1&origin=${fa},${fl}&destination=${ta},${tl}`;
   try {
-    await Linking.openURL(url);
+    if (Platform.OS === "ios") {
+      const url = `http://maps.apple.com/?saddr=${fa},${fl}&daddr=${ta},${tl}`;
+      await Linking.openURL(url);
+      return;
+    }
+
+    // Android: prefer an intent that opens the Google Maps app directly.
+    const nav = `google.navigation:q=${ta},${tl}&mode=d`;
+    const canNav = await Linking.canOpenURL(nav);
+    if (canNav) {
+      await Linking.openURL(nav);
+      return;
+    }
+
+    // Fallback: web URL (opens browser or maps app chooser).
+    const web = `https://www.google.com/maps/dir/?api=1&origin=${fa},${fl}&destination=${ta},${tl}`;
+    await Linking.openURL(web);
   } catch {
     Alert.alert("Maps", "Could not open directions.");
   }

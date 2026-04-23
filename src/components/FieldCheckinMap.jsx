@@ -1,16 +1,7 @@
-import { useMemo, useRef, useEffect } from "react";
+import { useRef } from "react";
 import { View, Text, StyleSheet, Platform, NativeModules } from "react-native";
 import MapView, { Marker, Circle, UrlTile } from "react-native-maps";
-import {
-  MapView as MLMapView,
-  Camera,
-  UserLocation,
-  ShapeSource,
-  CircleLayer,
-  SymbolLayer,
-  FillLayer,
-} from "@maplibre/maplibre-react-native";
-import { getFieldMapStyle, CARTO_VOYAGER_URL_TEMPLATE } from "@/config/fieldMapStyle";
+import { CARTO_VOYAGER_URL_TEMPLATE } from "@/config/fieldMapStyle";
 
 /** Dims native Google basemap so OSM-style raster tiles read clearly (Android). iOS ignores this for Apple Maps. */
 const GOOGLE_BASE_MINIMAL_STYLE = [
@@ -25,35 +16,21 @@ const GOOGLE_BASE_MINIMAL_STYLE = [
 
 const MLRN = NativeModules.MLRNModule;
 
+let MapLibreEntry = null;
+function getMapLibreComponent() {
+  if (!MapLibreEntry) {
+    MapLibreEntry = require("./FieldCheckinMap.libre").default;
+  }
+  return MapLibreEntry;
+}
+
 export function isMapLibreAvailable() {
   return Platform.OS !== "web" && !!MLRN;
 }
 
-/** Geodesic circle as GeoJSON polygon (ring closed). */
-function geofencePolygonRing(lat, lng, radiusM, steps = 72) {
-  const R = 6371000;
-  const lat1 = (lat * Math.PI) / 180;
-  const lng1 = (lng * Math.PI) / 180;
-  const ring = [];
-  for (let i = 0; i <= steps; i++) {
-    const brng = (i / steps) * 2 * Math.PI;
-    const lat2 = Math.asin(
-      Math.sin(lat1) * Math.cos(radiusM / R) + Math.cos(lat1) * Math.sin(radiusM / R) * Math.cos(brng),
-    );
-    const lng2 =
-      lng1 +
-      Math.atan2(
-        Math.sin(brng) * Math.sin(radiusM / R) * Math.cos(lat1),
-        Math.cos(radiusM / R) - Math.sin(lat1) * Math.sin(lat2),
-      );
-    ring.push([(lng2 * 180) / Math.PI, (lat2 * 180) / Math.PI]);
-  }
-  return ring;
-}
-
 /**
  * MapLibre + OSM-style tiles when running a dev/production build with native MapLibre.
- * In Expo Go, falls back to react-native-maps + Carto Voyager UrlTile (OSM-style). Dev build uses MapLibre.
+ * In Expo Go, MapLibre is never imported — uses react-native-maps + Carto Voyager UrlTile.
  */
 export default function FieldCheckinMap({
   clients,
@@ -62,61 +39,11 @@ export default function FieldCheckinMap({
   userLoc,
   geofenceCenter,
   geofenceRadiusM,
+  centerOnUser = true,
   height = 220,
   fullScreen = false,
 }) {
-  const mapStyle = useMemo(() => getFieldMapStyle(), []);
   const cameraRef = useRef(null);
-
-  const centerCoord = useMemo(() => {
-    if (userLoc) return [userLoc.longitude, userLoc.latitude];
-    if (clients[0]) return [clients[0].longitude, clients[0].latitude];
-    return [78.9629, 20.5937];
-  }, [userLoc, clients]);
-
-  const clientFeatures = useMemo(
-    () => ({
-      type: "FeatureCollection",
-      features: clients.map((c) => ({
-        type: "Feature",
-        id: c.id,
-        properties: {
-          id: c.id,
-          name: c.clientName,
-          sel: c.id === selectedClientId ? 1 : 0,
-        },
-        geometry: {
-          type: "Point",
-          coordinates: [c.longitude, c.latitude],
-        },
-      })),
-    }),
-    [clients, selectedClientId],
-  );
-
-  const geofenceFill = useMemo(() => {
-    if (!geofenceCenter || !geofenceRadiusM) return null;
-    const ring = geofencePolygonRing(geofenceCenter.latitude, geofenceCenter.longitude, geofenceRadiusM);
-    return {
-      type: "Feature",
-      properties: {},
-      geometry: {
-        type: "Polygon",
-        coordinates: [ring],
-      },
-    };
-  }, [geofenceCenter, geofenceRadiusM]);
-
-  useEffect(() => {
-    if (!MLRN || !cameraRef.current || !userLoc) return;
-    cameraRef.current.setCamera({
-      centerCoordinate: [userLoc.longitude, userLoc.latitude],
-      zoomLevel: fullScreen ? 15 : 14,
-      animationDuration: 700,
-      animationMode: "flyTo",
-    });
-  }, [userLoc?.latitude, userLoc?.longitude, fullScreen]);
-
   const outerStyle = fullScreen ? { flex: 1, minHeight: 200 } : { height, borderRadius: 16 };
 
   if (Platform.OS === "web") {
@@ -151,15 +78,34 @@ export default function FieldCheckinMap({
               fillColor="rgba(0,122,255,0.08)"
             />
           ) : null}
-          {clients.map((c) => (
-            <Marker
-              key={c.id}
-              coordinate={{ latitude: c.latitude, longitude: c.longitude }}
-              title={c.clientName}
-              pinColor={c.id === selectedClientId ? "orange" : "red"}
-              onPress={() => onSelectClient?.(c.id)}
-            />
-          ))}
+          {clients.map((c) => {
+            const selected = c.id === selectedClientId;
+            return (
+              <Marker
+                key={c.id}
+                coordinate={{ latitude: c.latitude, longitude: c.longitude }}
+                title={c.clientName}
+                onPress={() => onSelectClient?.(c.id)}
+                anchor={{ x: 0.5, y: 1 }}
+              >
+                <View
+                  style={{
+                    minWidth: 44,
+                    height: 44,
+                    paddingHorizontal: 10,
+                    borderRadius: 22,
+                    backgroundColor: "rgba(255,255,255,0.95)",
+                    borderWidth: 2,
+                    borderColor: selected ? "#FF9500" : "#FF3B30",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Text style={{ fontSize: 22 }}>{selected ? "📍" : "🏢"}</Text>
+                </View>
+              </Marker>
+            );
+          })}
         </MapView>
         <View style={styles.osmAttrib} pointerEvents="none">
           <Text style={styles.osmAttribText}>© OpenStreetMap © CARTO</Text>
@@ -168,88 +114,20 @@ export default function FieldCheckinMap({
     );
   }
 
-  const useCluster = clients.length >= 12;
-
+  const FieldCheckinMapLibre = getMapLibreComponent();
   return (
-    <View style={[{ overflow: "hidden" }, outerStyle]}>
-      <MLMapView
-        style={StyleSheet.absoluteFill}
-        mapStyle={mapStyle}
-        attributionEnabled
-        logoEnabled={false}
-        compassEnabled
-        scaleBarEnabled
-      >
-        <Camera
-          ref={cameraRef}
-          defaultSettings={{
-            centerCoordinate: centerCoord,
-            zoomLevel: userLoc ? (fullScreen ? 15 : 14) : 10,
-            animationMode: "moveTo",
-          }}
-        />
-        <UserLocation visible showsUserHeadingIndicator androidRenderMode="compass" />
-
-        {geofenceFill ? (
-          <ShapeSource id="geofence" shape={geofenceFill}>
-            <FillLayer
-              id="geofence-fill"
-              style={{
-                fillColor: "rgba(0, 122, 255, 0.14)",
-              }}
-            />
-          </ShapeSource>
-        ) : null}
-
-        <ShapeSource
-          id="clients"
-          shape={clientFeatures}
-          cluster={useCluster}
-          clusterRadius={56}
-          clusterMaxZoomLevel={16}
-          onPress={(e) => {
-            const f = e?.features?.[0];
-            if (!f?.properties) return;
-            if (f.properties.cluster) return;
-            const id = f.properties.id;
-            if (id) onSelectClient?.(id);
-          }}
-        >
-          <CircleLayer
-            id="clusters"
-            filter={["has", "point_count"]}
-            style={{
-              circleColor: "rgba(0, 122, 255, 0.88)",
-              circleRadius: ["step", ["get", "point_count"], 20, 10, 24, 50, 30],
-              circleOpacity: 0.95,
-              circleStrokeWidth: 2,
-              circleStrokeColor: "#FFFFFF",
-            }}
-          />
-          <SymbolLayer
-            id="cluster-count"
-            filter={["has", "point_count"]}
-            style={{
-              textField: "{point_count_abbreviated}",
-              textSize: 12,
-              textColor: "#FFFFFF",
-              textAllowOverlap: true,
-            }}
-          />
-          <CircleLayer
-            id="client-dots"
-            filter={["!", ["has", "point_count"]]}
-            style={{
-              circleRadius: ["match", ["get", "sel"], 1, 11, 7],
-              circleColor: ["match", ["get", "sel"], 1, "#FF9500", "#FF3B30"],
-              circleOpacity: 0.95,
-              circleStrokeWidth: 2,
-              circleStrokeColor: "#FFFFFF",
-            }}
-          />
-        </ShapeSource>
-      </MLMapView>
-    </View>
+    <FieldCheckinMapLibre
+      clients={clients}
+      selectedClientId={selectedClientId}
+      onSelectClient={onSelectClient}
+      userLoc={userLoc}
+      geofenceCenter={geofenceCenter}
+      geofenceRadiusM={geofenceRadiusM}
+      fullScreen={fullScreen}
+      outerStyle={outerStyle}
+      cameraRef={cameraRef}
+      centerOnUser={centerOnUser}
+    />
   );
 }
 

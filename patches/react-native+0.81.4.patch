@@ -28,3 +28,59 @@ index c737c93..f3edd25 100644
 -    },
 -  });
  }
+diff --git a/node_modules/react-native/scripts/codegen/generate-specs-cli-executor.js b/node_modules/react-native/scripts/codegen/generate-specs-cli-executor.js
+index a50afb5..ec3ebd1 100644
+--- a/node_modules/react-native/scripts/codegen/generate-specs-cli-executor.js
++++ b/node_modules/react-native/scripts/codegen/generate-specs-cli-executor.js
+@@ -98,14 +98,44 @@ function generateSpecFromInMemorySchema(
+     // Note: this should've been done by RNCodegen's generators, but:
+     // * the generators don't support platform option yet
+     // * this subdir structure is Android-only, not applicable to iOS
+-    const files = fs.readdirSync(outputDirectory);
+-    const jniOutputDirectory = `${outputDirectory}/jni/react/renderer/components/${libraryName}`;
++    const jniOutputDirectory = path.join(
++      outputDirectory,
++      'jni',
++      'react',
++      'renderer',
++      'components',
++      libraryName,
++    );
+     fs.mkdirSync(jniOutputDirectory, {recursive: true});
+-    files
+-      .filter(f => f.endsWith('.h') || f.endsWith('.cpp'))
+-      .forEach(f => {
+-        fs.renameSync(`${outputDirectory}/${f}`, `${jniOutputDirectory}/${f}`);
+-      });
++    fs.readdirSync(outputDirectory).forEach(name => {
++      if (!name.endsWith('.h') && !name.endsWith('.cpp')) {
++        return;
++      }
++      const src = path.join(outputDirectory, name);
++      const dest = path.join(jniOutputDirectory, name);
++      let st;
++      try {
++        st = fs.lstatSync(src);
++      } catch (e) {
++        if (e && e.code === 'ENOENT') {
++          return;
++        }
++        throw e;
++      }
++      if (!st.isFile()) {
++        return;
++      }
++      if (fs.existsSync(dest)) {
++        fs.rmSync(dest, {force: true});
++      }
++      try {
++        fs.renameSync(src, dest);
++      } catch (e) {
++        // Windows: antivirus / parallel Gradle can make rename fail; copy+unlink is more reliable.
++        fs.copyFileSync(src, dest);
++        fs.unlinkSync(src);
++      }
++    });
+   }
+ }
+ 

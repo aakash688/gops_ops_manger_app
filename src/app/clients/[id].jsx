@@ -10,6 +10,7 @@ import {
   Platform,
   Alert,
   Image,
+  RefreshControl,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
@@ -41,6 +42,7 @@ import { apiGetJson } from "@/utils/api";
 
 const TABS = [
   { id: "OVERVIEW", label: "Overview", Icon: Building2 },
+  { id: "LIVE_ON_SITE", label: "Live on site", Icon: Users },
   { id: "SERVICES", label: "Services", Icon: Briefcase },
   { id: "DOCUMENTS", label: "Documents", Icon: FolderOpen },
   { id: "CONTACTS", label: "Contacts", Icon: Users },
@@ -78,6 +80,16 @@ function expiryTone(label) {
   return { bg: "rgba(52, 199, 89, 0.15)", fg: "#1B5E20" };
 }
 
+function formatCheckInTime(value) {
+  if (!value) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) {
+    const s = String(value);
+    return s.length > 5 ? s.slice(11, 16) || s : s;
+  }
+  return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+}
+
 export default function ClientDetail() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -86,6 +98,10 @@ export default function ClientDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState("OVERVIEW");
+  const [liveOnSite, setLiveOnSite] = useState(null);
+  const [liveOnSiteLoading, setLiveOnSiteLoading] = useState(false);
+  const [liveOnSiteRefreshing, setLiveOnSiteRefreshing] = useState(false);
+  const [liveOnSiteError, setLiveOnSiteError] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -108,6 +124,31 @@ export default function ClientDetail() {
       cancelled = true;
     };
   }, [id]);
+
+  const loadLiveOnSite = async (opts = {}) => {
+    const isPull = opts.refresh === true;
+    setLiveOnSiteError(null);
+    if (isPull) setLiveOnSiteRefreshing(true);
+    else setLiveOnSiteLoading(true);
+    try {
+      const { data } = await apiGetJson(`/apps/operations-manager/clients/${id}/live-on-site`);
+      setLiveOnSite(data ?? null);
+    } catch (e) {
+      setLiveOnSite(null);
+      setLiveOnSiteError(e instanceof Error ? e.message : "Failed to load live employees");
+    } finally {
+      if (isPull) setLiveOnSiteRefreshing(false);
+      else setLiveOnSiteLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab !== "LIVE_ON_SITE") return;
+    if (liveOnSiteLoading) return;
+    if (liveOnSite) return;
+    loadLiveOnSite({});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
 
   const saveContactToDevice = async (contact, clientTitle) => {
     if (Platform.OS === "web") {
@@ -334,6 +375,14 @@ export default function ClientDetail() {
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingBottom: insets.bottom + 32 }}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          activeTab === "LIVE_ON_SITE" ? (
+            <RefreshControl
+              refreshing={liveOnSiteRefreshing}
+              onRefresh={() => loadLiveOnSite({ refresh: true })}
+            />
+          ) : undefined
+        }
       >
         <LinearGradient
           colors={["#E8F2FF", "#EEF6FC", "#F5F5F7"]}
@@ -573,6 +622,95 @@ export default function ClientDetail() {
                   </Text>
                 ) : null}
               </GlassView>
+            </>
+          )}
+
+          {activeTab === "LIVE_ON_SITE" && (
+            <>
+              <SectionLabel>LIVE ON SITE</SectionLabel>
+              <Text style={{ fontSize: 14, color: "#8E8E93", marginBottom: 14, lineHeight: 20 }}>
+                Checked in today · pull down to refresh
+              </Text>
+
+              {liveOnSiteLoading && !liveOnSite?.items?.length ? (
+                <ActivityIndicator style={{ marginVertical: 20 }} color="#007AFF" />
+              ) : null}
+              {liveOnSiteError ? (
+                <Text style={{ color: "#C62828", marginBottom: 10, fontSize: 14 }}>{liveOnSiteError}</Text>
+              ) : null}
+
+              {liveOnSite?.items?.length ? (
+                liveOnSite.items.map((p) => {
+                  const checkInLabel = formatCheckInTime(p.checkIn);
+                  return (
+                    <GlassView
+                      key={p.employeeId}
+                      style={[
+                        {
+                          paddingVertical: 14,
+                          paddingHorizontal: 16,
+                          borderRadius: 14,
+                          marginBottom: 10,
+                          overflow: "hidden",
+                        },
+                        isLiquidGlassAvailable() ? {} : { opacity: 0.96, backgroundColor: "#ffffff" },
+                      ]}
+                    >
+                      <View
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "flex-start",
+                          justifyContent: "space-between",
+                          gap: 12,
+                        }}
+                      >
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <Text style={{ fontSize: 17, fontWeight: "700", color: "#000" }} numberOfLines={1}>
+                            {p.name}
+                          </Text>
+                          <Text style={{ fontSize: 13, color: "#8E8E93", marginTop: 4 }}>
+                            {p.employeeCode ? `Code ${p.employeeCode}` : "Code —"}
+                          </Text>
+                          <Text style={{ fontSize: 13, color: "#3C3C43", marginTop: 8 }} numberOfLines={2}>
+                            {[p.designation || "—", checkInLabel ? `Since ${checkInLabel}` : null]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </Text>
+                          {p.phone ? (
+                            <Text style={{ fontSize: 13, color: "#8E8E93", marginTop: 6 }} numberOfLines={1}>
+                              {p.phone}
+                            </Text>
+                          ) : null}
+                        </View>
+                        {p.phone ? (
+                          <Pressable
+                            onPress={() => Linking.openURL(`tel:${p.phone}`)}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Call ${p.name}`}
+                            style={({ pressed }) => ({
+                              paddingVertical: 10,
+                              paddingHorizontal: 14,
+                              borderRadius: 12,
+                              backgroundColor: "#007AFF",
+                              opacity: pressed ? 0.88 : 1,
+                              flexDirection: "row",
+                              alignItems: "center",
+                              gap: 6,
+                            })}
+                          >
+                            <Phone size={18} color="#FFF" />
+                            <Text style={{ color: "#FFF", fontWeight: "700", fontSize: 15 }}>Call</Text>
+                          </Pressable>
+                        ) : null}
+                      </View>
+                    </GlassView>
+                  );
+                })
+              ) : !liveOnSiteLoading ? (
+                <Text style={{ color: "#8E8E93", fontSize: 14, lineHeight: 20 }}>
+                  No one is checked in right now. Pull down to refresh.
+                </Text>
+              ) : null}
             </>
           )}
 

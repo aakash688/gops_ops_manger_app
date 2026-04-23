@@ -1,9 +1,7 @@
-import { router } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
-import { useCallback, useEffect, useMemo } from 'react';
-import { create } from 'zustand';
-import { Modal, View } from 'react-native';
+import { useCallback, useEffect } from 'react';
 import { useAuthModal, useAuthStore, authKey } from './store';
+import { stopLiveTracking } from '@/services/liveTracking';
 
 
 /**
@@ -43,10 +41,15 @@ export const useAuth = () => {
     open({ mode: 'signup' });
   }, [open]);
 
-  const signOut = useCallback(() => {
+  const signOut = useCallback(async () => {
+    try {
+      await stopLiveTracking();
+    } catch {
+      /* still sign out */
+    }
     setAuth(null);
     close();
-  }, [close]);
+  }, [close, setAuth]);
 
   return {
     isReady,

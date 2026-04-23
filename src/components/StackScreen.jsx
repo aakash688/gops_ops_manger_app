@@ -16,6 +16,8 @@ export default function StackScreen({
   subtitle,
   children,
   contentStyle,
+  /** When false, hides the header back control (e.g. root login). */
+  showBack = true,
 }) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -37,14 +39,16 @@ export default function StackScreen({
           borderBottomColor: "rgba(0,0,0,0.06)",
         }}
       >
-        <Pressable
-          onPress={() => router.back()}
-          hitSlop={12}
-          style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
-        >
-          <ArrowLeft size={24} color="#000" />
-        </Pressable>
-        <View style={{ marginLeft: 12, flex: 1 }}>
+        {showBack ? (
+          <Pressable
+            onPress={() => router.back()}
+            hitSlop={12}
+            style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+          >
+            <ArrowLeft size={24} color="#000" />
+          </Pressable>
+        ) : null}
+        <View style={{ marginLeft: showBack ? 12 : 0, flex: 1 }}>
           <Text style={{ fontSize: 18, fontWeight: "700", color: "#000" }}>
             {title}
           </Text>

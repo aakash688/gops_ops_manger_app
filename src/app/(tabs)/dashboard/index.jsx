@@ -34,6 +34,8 @@ import {
 import { useRouter } from "expo-router";
 import FloatingActionButton from "@/components/FloatingActionButton";
 import { useState, useEffect } from "react";
+import { apiGetJson } from "@/utils/api";
+import { useAuthStore } from "@/utils/auth/store";
 
 export default function Dashboard() {
   const insets = useSafeAreaInsets();
@@ -47,6 +49,8 @@ export default function Dashboard() {
   });
   const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const employeeId = useAuthStore((s) => s.auth?.user?.employeeId);
+  const [tracking, setTracking] = useState({ trackedAt: null, sessionOpen: false });
 
   useEffect(() => {
     fetchDashboardData();
@@ -54,20 +58,23 @@ export default function Dashboard() {
 
   const fetchDashboardData = async () => {
     try {
-      const [statsRes, alertsRes] = await Promise.all([
-        fetch("/api/dashboard/summary"),
-        fetch("/api/dashboard/alerts"),
+      const [{ data: statsData }, { data: teamLatest }] = await Promise.all([
+        apiGetJson("/dashboard"),
+        apiGetJson("/apps/live-tracking/team/latest"),
       ]);
 
-      if (statsRes.ok) {
-        const statsData = await statsRes.json();
-        setStats(statsData);
-      }
+      setStats({
+        present: statsData?.employeesCount ?? 0,
+        absent: 0,
+        pendingLeaves: 0,
+        activeSites: statsData?.clientsCount ?? 0,
+        openTickets: statsData?.openTicketsCount ?? 0,
+      });
 
-      if (alertsRes.ok) {
-        const alertsData = await alertsRes.json();
-        setAlerts(alertsData);
-      }
+      const me = Array.isArray(teamLatest) && employeeId
+        ? teamLatest.find((t) => t.employeeId === employeeId)
+        : null;
+      setTracking({ trackedAt: me?.trackedAt ?? null, sessionOpen: me?.sessionOpen === true });
     } catch {
       setStats({
         present: 42,
@@ -79,6 +86,17 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const formatAgo = (iso) => {
+    if (!iso) return "—";
+    const t = new Date(iso).getTime();
+    if (Number.isNaN(t)) return "—";
+    const sec = Math.max(0, Math.round((Date.now() - t) / 1000));
+    if (sec < 60) return `${sec}s ago`;
+    if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+    if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+    return `${Math.floor(sec / 86400)}d ago`;
   };
 
   const handleAlertAction = (action) => {
@@ -383,7 +401,7 @@ export default function Dashboard() {
             />
             <QuickAction
               icon={Radio}
-              label="Live tracking"
+              label={tracking.trackedAt ? `Live tracking · ${formatAgo(tracking.trackedAt)}` : "Live tracking"}
               onPress={() => router.push("/live-tracking")}
             />
           </View>
@@ -437,11 +455,17 @@ export default function Dashboard() {
               marginBottom: 16,
             }}
           >
-            <QuickAction
-              icon={Banknote}
-              label="Advance payment"
-              onPress={() => router.push("/advance-payment")}
-            />
+            {/**
+             * Temporarily hidden per product decision.
+             * Keep code for later re-enable (do not delete).
+             */}
+            {/*
+              <QuickAction
+                icon={Banknote}
+                label="Advance payment"
+                onPress={() => router.push("/advance-payment")}
+              />
+            */}
             <QuickAction
               icon={DollarSign}
               label="Add penalty"

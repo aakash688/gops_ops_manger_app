@@ -42,3 +42,6 @@ app-example
 .metro-virtual/*
 
 caches/*
+
+# Local Gradle user home (optional android-local.ps1 -FreshGradleHome)
+.gradle-local-home/

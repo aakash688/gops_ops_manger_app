@@ -27,6 +27,7 @@
       "package": "xyz.create.CreateExpoEnvironment"
     },
     "plugins": [
+      "./plugins/withAndroidWindowsGradleProps",
       [
         "expo-router",
         {
@@ -58,9 +59,24 @@
         }
       ],
       "expo-font",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "G-ops shares your live location with your organization during duty for safety and attendance verification.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isIosBackgroundLocationEnabled": true
+        }
+      ],
       "expo-secure-store",
       "expo-web-browser",
-      "@maplibre/maplibre-react-native"
+      "@maplibre/maplibre-react-native",
+      [
+        "react-native-google-mobile-ads",
+        {
+          "androidAppId": "ca-app-pub-3940256099942544~3347511713",
+          "iosAppId": "ca-app-pub-3940256099942544~1458002511"
+        }
+      ]
     ],
     "web": {
       "bundler": "metro",

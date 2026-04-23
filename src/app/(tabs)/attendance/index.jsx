@@ -4,6 +4,8 @@ import {
   ScrollView,
   Pressable,
   TouchableOpacity,
+  RefreshControl,
+  ActivityIndicator,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
@@ -17,77 +19,83 @@ import {
   Clock,
 } from "lucide-react-native";
 import { useRouter } from "expo-router";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import FloatingActionButton from "@/components/FloatingActionButton";
+import { apiGetJson } from "@/utils/api";
+
+function fmtTime(isoTime) {
+  if (!isoTime || typeof isoTime !== "string") return null;
+  const parts = isoTime.split(":");
+  if (parts.length >= 2) return `${parts[0]}:${parts[1]}`;
+  return isoTime;
+}
+
+/** Derive card status from attendance record row (org list API). */
+function rowStatus(row) {
+  const p = row?.punctuality;
+  if (p === "LATE") return "LATE";
+  if (!row?.checkInTime) return "ABSENT";
+  if (p === "EARLY" || p === "ON_TIME") return "PRESENT";
+  return "PRESENT";
+}
+
+function summarizeRows(rows) {
+  let present = 0;
+  let late = 0;
+  let absent = 0;
+  for (const r of rows) {
+    const s = rowStatus(r);
+    if (s === "LATE") late += 1;
+    else if (s === "ABSENT") absent += 1;
+    else present += 1;
+  }
+  return { present, late, absent };
+}
 
 export default function Attendance() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const [selectedDate, setSelectedDate] = useState(new Date());
-  const [guards, setGuards] = useState([]);
+  const [rows, setRows] = useState([]);
   const [summary, setSummary] = useState({ present: 0, absent: 0, late: 0 });
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState(null);
 
-  useEffect(() => {
-    fetchAttendance();
+  const fetchAttendance = useCallback(async () => {
+    setError(null);
+    const dateStr = selectedDate.toISOString().split("T")[0];
+    try {
+      const params = new URLSearchParams({
+        attendanceDate: dateStr,
+        limit: "100",
+        offset: "0",
+      });
+      const { data } = await apiGetJson(`/attendance-records?${params.toString()}`);
+      const list = Array.isArray(data) ? data : [];
+      setRows(list);
+      setSummary(summarizeRows(list));
+    } catch (e) {
+      setRows([]);
+      setSummary({ present: 0, absent: 0, late: 0 });
+      setError(e instanceof Error ? e.message : "Could not load attendance");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, [selectedDate]);
 
-  const fetchAttendance = async () => {
-    try {
-      const dateStr = selectedDate.toISOString().split("T")[0];
-      const response = await fetch(`/api/attendance?date=${dateStr}`);
-      if (response.ok) {
-        const data = await response.json();
-        setGuards(data.guards);
-        setSummary(data.summary);
-        return;
-      }
-    } catch {
-      // Offline or API unavailable
-    }
-    setGuards([
-        {
-          id: 1,
-          name: "Rajesh Kumar",
-          status: "PRESENT",
-          site: "Warehouse 2",
-          shift: "Night",
-          checkIn: "18:00",
-        },
-        {
-          id: 2,
-          name: "Amit Singh",
-          status: "PRESENT",
-          site: "Office Complex",
-          shift: "Day",
-          checkIn: "08:00",
-        },
-        {
-          id: 3,
-          name: "Priya Sharma",
-          status: "ABSENT",
-          site: "Mall Entrance",
-          shift: "Day",
-          checkIn: null,
-        },
-        {
-          id: 4,
-          name: "Vijay Patel",
-          status: "LATE",
-          site: "Factory Gate",
-          shift: "Day",
-          checkIn: "08:45",
-        },
-      ]);
-    setSummary({ present: 2, absent: 1, late: 1 });
-  };
+  useEffect(() => {
+    setLoading(true);
+    void fetchAttendance();
+  }, [fetchAttendance]);
 
-  const formatDate = (date) => {
-    return date.toLocaleDateString("en-IN", {
+  const formatDate = (date) =>
+    date.toLocaleDateString("en-IN", {
       day: "numeric",
       month: "short",
       year: "numeric",
     });
-  };
 
   const changeDate = (days) => {
     const newDate = new Date(selectedDate);
@@ -121,11 +129,21 @@ export default function Attendance() {
     }
   };
 
-  const GuardCard = ({ guard }) => {
-    const StatusIcon = getStatusIcon(guard.status);
+  const GuardCard = ({ row }) => {
+    const status = rowStatus(row);
+    const StatusIcon = getStatusIcon(status);
+    const name = row?.employee?.employeeName ?? row?.employee?.employeeCode ?? "Employee";
+    const site = row?.client?.clientName ?? "—";
+    const shift = row?.shift ?? row?.attendanceMaster?.name ?? "—";
+    const checkIn = fmtTime(row?.checkInTime);
+    const checkOut = fmtTime(row?.checkOutTime);
+    const empId = row?.employeeId;
+
     return (
       <Pressable
-        onPress={() => router.push(`/attendance/${guard.id}`)}
+        onPress={() => {
+          if (empId) router.push(`/employee/${empId}`);
+        }}
         style={({ pressed }) => ({
           opacity: pressed ? 0.8 : 1,
           transform: [{ scale: pressed ? 0.98 : 1 }],
@@ -161,28 +179,33 @@ export default function Attendance() {
                   marginBottom: 4,
                 }}
               >
-                {guard.name}
+                {name}
               </Text>
               <Text style={{ fontSize: 14, color: "#666", marginBottom: 8 }}>
-                {guard.site} • {guard.shift} Shift
+                {site} • {shift}
               </Text>
-              {guard.checkIn && (
+              {checkIn ? (
                 <Text style={{ fontSize: 13, color: "#999" }}>
-                  Check-in: {guard.checkIn}
+                  In: {checkIn}
+                  {checkOut ? ` · Out: ${checkOut}` : " · Still on site"}
+                </Text>
+              ) : (
+                <Text style={{ fontSize: 13, color: "#999" }}>
+                  No check-in on file
                 </Text>
               )}
             </View>
             <View style={{ alignItems: "center" }}>
-              <StatusIcon size={24} color={getStatusColor(guard.status)} />
+              <StatusIcon size={24} color={getStatusColor(status)} />
               <Text
                 style={{
                   fontSize: 12,
-                  color: getStatusColor(guard.status),
+                  color: getStatusColor(status),
                   marginTop: 4,
                   fontWeight: "600",
                 }}
               >
-                {guard.status}
+                {status}
               </Text>
             </View>
           </View>
@@ -195,7 +218,6 @@ export default function Attendance() {
     <View style={{ flex: 1, backgroundColor: "#F5F5F7" }}>
       <StatusBar style="dark" />
 
-      {/* Header */}
       <View
         style={{
           paddingHorizontal: 20,
@@ -206,9 +228,11 @@ export default function Attendance() {
         <Text style={{ fontSize: 32, fontWeight: "700", color: "#000" }}>
           Attendance
         </Text>
+        <Text style={{ fontSize: 13, color: "#8E8E93", marginTop: 6 }}>
+          Field sessions for the selected day (from attendance records)
+        </Text>
       </View>
 
-      {/* Date Selector */}
       <View style={{ paddingHorizontal: 20, marginBottom: 20 }}>
         <GlassView
           style={[
@@ -226,10 +250,7 @@ export default function Attendance() {
               : { opacity: 0.95, backgroundColor: "#ffffff" },
           ]}
         >
-          <TouchableOpacity
-            onPress={() => changeDate(-1)}
-            style={{ padding: 4 }}
-          >
+          <TouchableOpacity onPress={() => changeDate(-1)} style={{ padding: 4 }}>
             <ChevronLeft size={24} color="#007AFF" />
           </TouchableOpacity>
           <View style={{ flexDirection: "row", alignItems: "center" }}>
@@ -245,16 +266,12 @@ export default function Attendance() {
               {formatDate(selectedDate)}
             </Text>
           </View>
-          <TouchableOpacity
-            onPress={() => changeDate(1)}
-            style={{ padding: 4 }}
-          >
+          <TouchableOpacity onPress={() => changeDate(1)} style={{ padding: 4 }}>
             <ChevronRight size={24} color="#007AFF" />
           </TouchableOpacity>
         </GlassView>
       </View>
 
-      {/* Summary */}
       <View style={{ paddingHorizontal: 20, marginBottom: 20 }}>
         <View style={{ flexDirection: "row", gap: 8 }}>
           <GlassView
@@ -296,7 +313,7 @@ export default function Attendance() {
               {summary.absent}
             </Text>
             <Text style={{ fontSize: 12, color: "#666", marginTop: 2 }}>
-              Absent
+              No check-in
             </Text>
           </GlassView>
           <GlassView
@@ -323,115 +340,6 @@ export default function Attendance() {
         </View>
       </View>
 
-      {/* Bulk Actions - NEW */}
-      <View style={{ paddingHorizontal: 20, marginBottom: 20 }}>
-        <Text
-          style={{
-            fontSize: 16,
-            fontWeight: "600",
-            color: "#000",
-            marginBottom: 12,
-          }}
-        >
-          Bulk Actions
-        </Text>
-        <View style={{ flexDirection: "row", gap: 8 }}>
-          <Pressable
-            onPress={async () => {
-              try {
-                const dateStr = selectedDate.toISOString().split("T")[0];
-                const response = await fetch("/api/attendance/bulk", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ date: dateStr, status: "PRESENT" }),
-                });
-                if (response.ok) {
-                  fetchAttendance();
-                }
-              } catch (error) {
-                console.error(error);
-              }
-            }}
-            style={({ pressed }) => ({
-              flex: 1,
-              opacity: pressed ? 0.8 : 1,
-            })}
-          >
-            <GlassView
-              isInteractive={true}
-              style={[
-                {
-                  padding: 12,
-                  borderRadius: 12,
-                  alignItems: "center",
-                  overflow: "hidden",
-                },
-                isLiquidGlassAvailable()
-                  ? {}
-                  : { opacity: 0.95, backgroundColor: "#34C759" },
-              ]}
-            >
-              <Text
-                style={{
-                  fontSize: 14,
-                  fontWeight: "600",
-                  color: isLiquidGlassAvailable() ? "#000" : "#FFF",
-                }}
-              >
-                Mark All Present
-              </Text>
-            </GlassView>
-          </Pressable>
-          <Pressable
-            onPress={async () => {
-              try {
-                const dateStr = selectedDate.toISOString().split("T")[0];
-                const response = await fetch("/api/attendance/bulk", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ date: dateStr, status: "ABSENT" }),
-                });
-                if (response.ok) {
-                  fetchAttendance();
-                }
-              } catch (error) {
-                console.error(error);
-              }
-            }}
-            style={({ pressed }) => ({
-              flex: 1,
-              opacity: pressed ? 0.8 : 1,
-            })}
-          >
-            <GlassView
-              isInteractive={true}
-              style={[
-                {
-                  padding: 12,
-                  borderRadius: 12,
-                  alignItems: "center",
-                  overflow: "hidden",
-                },
-                isLiquidGlassAvailable()
-                  ? {}
-                  : { opacity: 0.95, backgroundColor: "#FF3B30" },
-              ]}
-            >
-              <Text
-                style={{
-                  fontSize: 14,
-                  fontWeight: "600",
-                  color: isLiquidGlassAvailable() ? "#000" : "#FFF",
-                }}
-              >
-                Mark All Absent
-              </Text>
-            </GlassView>
-          </Pressable>
-        </View>
-      </View>
-
-      {/* Guard List */}
       <ScrollView
         style={{ flex: 1 }}
         contentContainerStyle={{
@@ -439,20 +347,60 @@ export default function Attendance() {
           paddingBottom: insets.bottom + 140,
         }}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => {
+              setRefreshing(true);
+              void fetchAttendance();
+            }}
+          />
+        }
       >
-        <Text
-          style={{
-            fontSize: 20,
-            fontWeight: "700",
-            color: "#000",
-            marginBottom: 12,
-          }}
-        >
-          Guard List
-        </Text>
-        {guards.map((guard) => (
-          <GuardCard key={guard.id} guard={guard} />
-        ))}
+        {loading ? (
+          <View style={{ paddingVertical: 32, alignItems: "center" }}>
+            <ActivityIndicator size="large" color="#007AFF" />
+            <Text style={{ marginTop: 12, color: "#666" }}>Loading attendance…</Text>
+          </View>
+        ) : error ? (
+          <Text style={{ color: "#C62828", fontWeight: "600", marginBottom: 12 }}>{error}</Text>
+        ) : null}
+
+        {!loading && !error && rows.length === 0 ? (
+          <GlassView
+            style={[
+              {
+                padding: 24,
+                borderRadius: 14,
+                alignItems: "center",
+                overflow: "hidden",
+              },
+              isLiquidGlassAvailable() ? {} : { backgroundColor: "#fff", opacity: 0.96 },
+            ]}
+          >
+            <Text style={{ fontSize: 15, color: "#666", textAlign: "center" }}>
+              No attendance records for this date.
+            </Text>
+          </GlassView>
+        ) : null}
+
+        {!loading && rows.length > 0 ? (
+          <>
+            <Text
+              style={{
+                fontSize: 20,
+                fontWeight: "700",
+                color: "#000",
+                marginBottom: 12,
+              }}
+            >
+              Records ({rows.length})
+            </Text>
+            {rows.map((row) => (
+              <GuardCard key={row.id} row={row} />
+            ))}
+          </>
+        ) : null}
       </ScrollView>
 
       <FloatingActionButton />

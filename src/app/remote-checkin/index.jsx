@@ -5,7 +5,6 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
-  TextInput,
   ScrollView,
   Modal,
   StyleSheet,
@@ -22,15 +21,16 @@ import {
   Maximize2,
   X,
   ExternalLink,
-  ChevronDown,
-  ChevronUp,
 } from "lucide-react-native";
 import { useState, useEffect, useCallback } from "react";
 import * as Location from "expo-location";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import StackScreen from "@/components/StackScreen";
 import FieldCheckinMap from "@/components/FieldCheckinMap";
 import { apiGetJson, apiPostJson } from "@/utils/api";
 import { openMapsDirections, openMapsPin } from "@/utils/openInMaps";
+import { startLiveTracking, stopLiveTracking } from "@/services/liveTracking";
+import { useAuthStore } from "@/utils/auth/store";
 
 function formatHm(isoOrTime) {
   if (!isoOrTime) return "—";
@@ -39,8 +39,29 @@ function formatHm(isoOrTime) {
   return s.slice(11, 16) || s;
 }
 
+/** Live GPS session follows field work session (check-in / check-out), not app login. */
+async function applyFieldPunchLiveTracking(punchBody, punchResult) {
+  if (Platform.OS === "web") return;
+  const action = punchResult?.action;
+  try {
+    if (action === "PUNCHED_IN") {
+      const loginMethod = punchBody.punchType === "FIELD_QR" ? "QR" : "REMOTE";
+      await startLiveTracking({ loginMethod });
+    } else if (action === "PUNCHED_OUT") {
+      await stopLiveTracking();
+    }
+  } catch (e) {
+    Alert.alert(
+      "Live tracking",
+      e instanceof Error ? e.message : "Could not update background location for this session.",
+    );
+  }
+}
+
 export default function RemoteCheckinScreen() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const params = useLocalSearchParams();
   const [permission, setPermission] = useState(null);
   const [userLoc, setUserLoc] = useState(null);
   const [clients, setClients] = useState([]);
@@ -49,9 +70,11 @@ export default function RemoteCheckinScreen() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [selectedClientId, setSelectedClientId] = useState(null);
-  const [qrToken, setQrToken] = useState("");
   const [mapFullscreen, setMapFullscreen] = useState(false);
-  const [showQr, setShowQr] = useState(false);
+  const employeeId = useAuthStore((s) => s.auth?.user?.employeeId);
+  const [clientHalts, setClientHalts] = useState(null);
+  const [clientHaltsLoading, setClientHaltsLoading] = useState(false);
+  const [clientHaltsError, setClientHaltsError] = useState(null);
 
   const loadStatic = useCallback(async () => {
     try {
@@ -91,6 +114,19 @@ export default function RemoteCheckinScreen() {
   useEffect(() => {
     loadStatic();
   }, [loadStatic]);
+
+  // If scanner returns a token (via /scanner?mode=field-checkin), auto-apply once.
+  useEffect(() => {
+    const token = typeof params?.qrToken === "string" ? params.qrToken : null;
+    if (!token) return;
+    // Clear param to avoid re-submitting on re-render.
+    router.setParams({ qrToken: undefined });
+    // Submit QR punch (no extra UI input on this screen).
+    (async () => {
+      await punchQr(token);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params?.qrToken]);
 
   useEffect(() => {
     let sub;
@@ -141,6 +177,7 @@ export default function RemoteCheckinScreen() {
     userLoc,
     geofenceCenter: selected ? { latitude: selected.latitude, longitude: selected.longitude } : null,
     geofenceRadiusM: selected ? fenceM : null,
+    centerOnUser: true,
   };
 
   const onDirections = () => {
@@ -183,7 +220,8 @@ export default function RemoteCheckinScreen() {
         longitude: userLoc.longitude,
         accuracyMeters: userLoc.accuracy ?? undefined,
       };
-      await apiPostJson("/apps/field-checkin/punch", body);
+      const { data: punchData } = await apiPostJson("/apps/field-checkin/punch", body);
+      await applyFieldPunchLiveTracking(body, punchData);
       await loadStatic();
       if (userLoc) refreshNearby(userLoc.latitude, userLoc.longitude);
       Alert.alert("Done", isCheckout ? "Checked out." : "Checked in.");
@@ -194,21 +232,21 @@ export default function RemoteCheckinScreen() {
     }
   };
 
-  const punchQr = async () => {
-    const raw = qrToken.trim();
-    if (!raw) {
-      Alert.alert("QR", "Paste the site QR payload.");
+  const punchQr = async (raw) => {
+    const token = String(raw || "").trim();
+    if (!token) {
+      Alert.alert("QR", "Scan the site QR first.");
       return;
     }
     let clientId = selected?.id;
     try {
-      const normalized = raw.replace(/-/g, "+").replace(/_/g, "/");
+      const normalized = token.replace(/-/g, "+").replace(/_/g, "/");
       const pad = normalized.length % 4 === 0 ? "" : "=".repeat(4 - (normalized.length % 4));
       const json = atob(normalized + pad);
       const payload = JSON.parse(json);
       if (payload.clientId) clientId = payload.clientId;
     } catch {
-      Alert.alert("QR", "Invalid token. Paste the full site QR string.");
+      Alert.alert("QR", "Invalid QR. Scan the full site QR.");
       return;
     }
     if (!clientId) {
@@ -221,18 +259,21 @@ export default function RemoteCheckinScreen() {
         clientId,
         punchType: "FIELD_QR",
         punchedAt: new Date().toISOString(),
-        qrNonce: raw,
+        qrNonce: token,
       };
       if (userLoc) {
         body.latitude = userLoc.latitude;
         body.longitude = userLoc.longitude;
         body.accuracyMeters = userLoc.accuracy ?? undefined;
       }
-      await apiPostJson("/apps/field-checkin/punch", body);
-      setQrToken("");
+      const { data: punchData } = await apiPostJson("/apps/field-checkin/punch", body);
+      await applyFieldPunchLiveTracking(body, punchData);
       await loadStatic();
       if (userLoc) refreshNearby(userLoc.latitude, userLoc.longitude);
-      Alert.alert("Done", "QR check-in recorded.");
+      Alert.alert(
+        "Done",
+        punchData?.action === "PUNCHED_OUT" ? "Checked out." : "QR check-in recorded.",
+      );
     } catch (e) {
       Alert.alert("Check-in", e instanceof Error ? e.message : "Request failed");
     } finally {
@@ -246,6 +287,31 @@ export default function RemoteCheckinScreen() {
     if (userLoc) await refreshNearby(userLoc.latitude, userLoc.longitude);
     setLoading(false);
   };
+
+  const loadClientHaltsToday = useCallback(async () => {
+    if (!employeeId) {
+      setClientHalts(null);
+      return;
+    }
+    const day = new Date().toISOString().slice(0, 10);
+    setClientHaltsError(null);
+    setClientHaltsLoading(true);
+    try {
+      const { data } = await apiGetJson(
+        `/apps/live-tracking/analytics/client-halts?employeeId=${encodeURIComponent(employeeId)}&dateFrom=${day}&dateTo=${day}&radiusMeters=500&limitPoints=4000`,
+      );
+      setClientHalts(data ?? null);
+    } catch (e) {
+      setClientHalts(null);
+      setClientHaltsError(e instanceof Error ? e.message : "Could not load visited sites");
+    } finally {
+      setClientHaltsLoading(false);
+    }
+  }, [employeeId]);
+
+  useEffect(() => {
+    loadClientHaltsToday().catch(() => {});
+  }, [loadClientHaltsToday]);
 
   return (
     <StackScreen title="Remote check-in" subtitle="Pick a site · GPS or QR" contentStyle={{ paddingHorizontal: 16 }}>
@@ -288,14 +354,6 @@ export default function RemoteCheckinScreen() {
               ? ` · ~${summary.openElapsedHoursApprox.toFixed(1)} h`
               : ""}
           </Text>
-          <Pressable
-            onPress={() => punchGps(true)}
-            disabled={busy}
-            style={({ pressed }) => [styles.btnDanger, { opacity: pressed || busy ? 0.9 : 1 }]}
-          >
-            <LogOut size={18} color="#FFF" />
-            <Text style={[styles.btnDangerText, { marginLeft: 8 }]}>Check out</Text>
-          </Pressable>
         </GlassView>
       ) : null}
 
@@ -393,73 +451,47 @@ export default function RemoteCheckinScreen() {
         )}
       </ScrollView>
 
-      {!active ? (
-        <Pressable
-          onPress={() => punchGps(false)}
-          disabled={busy || !withinFence || !selected}
-          style={({ pressed }) => ({
-            backgroundColor: withinFence && selected ? "#34C759" : "#C7C7CC",
-            borderRadius: 14,
-            paddingVertical: 16,
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "center",
-            marginBottom: 14,
-            opacity: pressed || busy ? 0.92 : 1,
-          })}
-        >
-          <LogIn size={22} color="#FFF" />
-          <Text style={{ color: "#FFF", fontWeight: "800", marginLeft: 10, fontSize: 17 }}>Check in</Text>
-        </Pressable>
-      ) : null}
+      {/* Primary action stays in one place: check-in ↔ check-out */}
+      <Pressable
+        onPress={() => punchGps(!!active)}
+        disabled={
+          busy ||
+          (active ? false : !withinFence || !selected)
+        }
+        style={({ pressed }) => ({
+          backgroundColor: active ? "#FF3B30" : withinFence && selected ? "#34C759" : "#C7C7CC",
+          borderRadius: 14,
+          paddingVertical: 16,
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "center",
+          marginBottom: 14,
+          opacity: pressed || busy ? 0.92 : 1,
+        })}
+      >
+        {active ? <LogOut size={22} color="#FFF" /> : <LogIn size={22} color="#FFF" />}
+        <Text style={{ color: "#FFF", fontWeight: "800", marginLeft: 10, fontSize: 17 }}>
+          {active ? "Check out" : "Check in"}
+        </Text>
+      </Pressable>
 
       <Pressable
-        onPress={() => setShowQr((v) => !v)}
+        onPress={() => router.push({ pathname: "/scanner", params: { mode: "field-checkin" } })}
+        disabled={busy}
         style={({ pressed }) => ({
           flexDirection: "row",
           alignItems: "center",
-          justifyContent: "space-between",
-          paddingVertical: 12,
-          marginBottom: showQr ? 8 : 4,
-          opacity: pressed ? 0.85 : 1,
+          justifyContent: "center",
+          paddingVertical: 14,
+          borderRadius: 14,
+          backgroundColor: "#007AFF",
+          marginBottom: 16,
+          opacity: pressed || busy ? 0.9 : 1,
         })}
       >
-        <View style={{ flexDirection: "row", alignItems: "center" }}>
-          <QrCode size={20} color="#007AFF" />
-          <Text style={{ fontWeight: "800", marginLeft: 8, color: "#000" }}>QR check-in</Text>
-        </View>
-        {showQr ? <ChevronUp size={20} color="#8E8E93" /> : <ChevronDown size={20} color="#8E8E93" />}
+        <QrCode size={20} color="#FFF" />
+        <Text style={{ color: "#FFF", fontWeight: "800", marginLeft: 8 }}>Scan QR</Text>
       </Pressable>
-
-      {showQr ? (
-        <>
-          <TextInput
-            value={qrToken}
-            onChangeText={setQrToken}
-            placeholder="Paste site QR"
-            placeholderTextColor="#999"
-            multiline
-            style={styles.qrInput}
-          />
-          <Pressable
-            onPress={punchQr}
-            disabled={busy}
-            style={({ pressed }) => ({
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "center",
-              paddingVertical: 14,
-              borderRadius: 14,
-              backgroundColor: "#007AFF",
-              marginBottom: 16,
-              opacity: pressed || busy ? 0.9 : 1,
-            })}
-          >
-            <QrCode size={20} color="#FFF" />
-            <Text style={{ color: "#FFF", fontWeight: "800", marginLeft: 8 }}>Submit QR</Text>
-          </Pressable>
-        </>
-      ) : null}
 
       {summary?.todaySegments?.length ? (
         <GlassView
@@ -484,25 +516,29 @@ export default function RemoteCheckinScreen() {
         </GlassView>
       ) : null}
 
-      {summary?.recentDays?.length ? (
-        <GlassView
-          style={[
-            styles.card,
-            { marginBottom: insets.bottom + 20 },
-            isLiquidGlassAvailable() ? {} : { backgroundColor: "#fff" },
-          ]}
-        >
-          <Text style={styles.sectionTitle}>Last 7 days</Text>
-          {summary.recentDays.map((d) => (
-            <View key={d.date} style={styles.dayRow}>
-              <Text style={styles.muted}>{d.date}</Text>
-              <Text style={{ fontWeight: "700" }}>
-                {d.totalHours}h · {d.sessions} visit{d.sessions === 1 ? "" : "s"}
+      <Text style={[styles.sectionTitle, { marginTop: 18 }]}>Visited sites today (auto)</Text>
+      {clientHaltsLoading ? (
+        <ActivityIndicator style={{ marginVertical: 10 }} />
+      ) : clientHaltsError ? (
+        <Text style={styles.err}>{clientHaltsError}</Text>
+      ) : clientHalts?.perClient?.length ? (
+        <GlassView style={[styles.card, isLiquidGlassAvailable() ? {} : { backgroundColor: "#fff" }]}>
+          {clientHalts.perClient.slice(0, 6).map((c) => (
+            <View key={c.clientId} style={styles.dayRow}>
+              <Text style={{ fontWeight: "800", color: "#000", flex: 1, paddingRight: 10 }} numberOfLines={1}>
+                {c.clientName}
+              </Text>
+              <Text style={{ fontWeight: "900", color: "#007AFF" }}>
+                {Math.round((c.totalDurationSec ?? 0) / 60)}m · {c.haltCount}
               </Text>
             </View>
           ))}
         </GlassView>
-      ) : null}
+      ) : (
+        <Text style={styles.muted}>No client halts detected yet.</Text>
+      )}
+
+      <View style={{ height: insets.bottom + 20 }} />
 
       <Modal
         visible={mapFullscreen}

@@ -14,19 +14,20 @@ import { ArrowLeft, Camera, X } from "lucide-react-native";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import * as ImagePicker from "expo-image-picker";
-import useUpload from "@/utils/useUpload";
 import KeyboardAvoidingAnimatedView from "@/components/KeyboardAvoidingAnimatedView";
+import ClientPickerModal from "@/components/ClientPickerModal";
+import { apiPostJson } from "@/utils/api";
 
 export default function CreateTicket() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [site, setSite] = useState("");
+  const [client, setClient] = useState(null);
   const [priority, setPriority] = useState("MEDIUM");
-  const [images, setImages] = useState([]);
+  const [images, setImages] = useState([]); // local assets (uri)
   const [loading, setLoading] = useState(false);
-  const [upload, { loading: uploadLoading }] = useUpload();
+  const [pickingClient, setPickingClient] = useState(false);
 
   const pickImage = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -36,17 +37,14 @@ export default function CreateTicket() {
     });
 
     if (!result.canceled) {
-      const uploadPromises = result.assets.map(async (asset) => {
-        const { url, error } = await upload({ reactNativeAsset: asset });
-        if (error) {
-          console.error(error);
-          return null;
-        }
-        return url;
-      });
-
-      const uploadedUrls = await Promise.all(uploadPromises);
-      setImages([...images, ...uploadedUrls.filter((url) => url !== null)]);
+      const next = result.assets
+        .map((a) => ({
+          uri: a.uri,
+          type: a.mimeType || "image/jpeg",
+          name: a.fileName || `ticket-${Date.now()}.jpg`,
+        }))
+        .filter((x) => !!x.uri);
+      setImages([...images, ...next]);
     }
   };
 
@@ -55,34 +53,32 @@ export default function CreateTicket() {
   };
 
   const handleSubmit = async () => {
-    if (!title || !description || !site) {
-      Alert.alert("Error", "Please fill all required fields");
+    if (!title || !description || !client?.id) {
+      Alert.alert("Error", "Please fill all required fields (Client, Title, Description)");
       return;
     }
 
     setLoading(true);
     try {
-      const response = await fetch("/api/tickets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title,
-          description,
-          site,
-          priority,
-          images,
-          status: "OPEN",
-        }),
+      // Backend supports an optional single image upload via multipart.
+      // For now we create ticket as JSON (works even without image); image support can be added with a dedicated endpoint.
+      await apiPostJson("/tickets", {
+        clientId: client.id,
+        title,
+        description,
+        societyName: client?.clientName ?? null,
+        priority,
       });
-
-      if (!response.ok) throw new Error("Failed to create ticket");
 
       Alert.alert("Success", "Ticket created successfully", [
         { text: "OK", onPress: () => router.back() },
       ]);
     } catch (error) {
       console.error(error);
-      Alert.alert("Error", "Failed to create ticket. Please try again.");
+      Alert.alert(
+        "Error",
+        error instanceof Error ? error.message : "Failed to create ticket. Please try again.",
+      );
     } finally {
       setLoading(false);
     }
@@ -160,7 +156,7 @@ export default function CreateTicket() {
           </GlassView>
         </View>
 
-        {/* Site */}
+        {/* Client/Site */}
         <View style={{ marginBottom: 20 }}>
           <Text
             style={{
@@ -170,7 +166,7 @@ export default function CreateTicket() {
               marginBottom: 8,
             }}
           >
-            Site *
+            Client / Site *
           </Text>
           <GlassView
             style={[
@@ -185,13 +181,11 @@ export default function CreateTicket() {
                 : { opacity: 0.95, backgroundColor: "#ffffff" },
             ]}
           >
-            <TextInput
-              placeholder="Enter site name"
-              value={site}
-              onChangeText={setSite}
-              style={{ fontSize: 16, color: "#000" }}
-              placeholderTextColor="#999"
-            />
+            <TouchableOpacity onPress={() => setPickingClient(true)}>
+              <Text style={{ fontSize: 16, color: client ? "#000" : "#999" }}>
+                {client ? client.clientName : "Select client"}
+              </Text>
+            </TouchableOpacity>
           </GlassView>
         </View>
 
@@ -304,7 +298,7 @@ export default function CreateTicket() {
           >
             Attachments
           </Text>
-          <TouchableOpacity onPress={pickImage} disabled={uploadLoading}>
+          <TouchableOpacity onPress={pickImage}>
             <GlassView
               isInteractive={true}
               style={[
@@ -321,7 +315,7 @@ export default function CreateTicket() {
             >
               <Camera size={32} color="#007AFF" />
               <Text style={{ fontSize: 14, color: "#007AFF", marginTop: 8 }}>
-                {uploadLoading ? "Uploading..." : "Add Photos"}
+                Add Photos (optional)
               </Text>
             </GlassView>
           </TouchableOpacity>
@@ -341,7 +335,7 @@ export default function CreateTicket() {
                   style={{ position: "relative", width: 100, height: 100 }}
                 >
                   <Image
-                    source={{ uri: img }}
+                    source={{ uri: img.uri }}
                     style={{ width: 100, height: 100, borderRadius: 8 }}
                   />
                   <TouchableOpacity
@@ -397,6 +391,17 @@ export default function CreateTicket() {
           </GlassView>
         </TouchableOpacity>
       </ScrollView>
+
+      <ClientPickerModal
+        visible={pickingClient}
+        onClose={() => setPickingClient(false)}
+        onSelect={(c) => {
+          setClient(c);
+          setPickingClient(false);
+        }}
+        title="Select client"
+        subtitle="Ticket will be raised for this site"
+      />
     </KeyboardAvoidingAnimatedView>
   );
 }

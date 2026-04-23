@@ -1,4 +1,7 @@
+import '@/utils/calendar-bootstrap';
+import '@/services/liveTracking/task';
 import { useAuth } from '@/utils/auth/useAuth';
+import LiveTrackingSessionSync from '@/components/LiveTrackingSessionSync';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
@@ -50,9 +53,11 @@ export default function RootLayout() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <GestureHandlerRootView style={{ flex: 1 }}>
-        <Stack screenOptions={{ headerShown: false }} />
-      </GestureHandlerRootView>
+      <LiveTrackingSessionSync>
+        <GestureHandlerRootView style={{ flex: 1 }}>
+          <Stack screenOptions={{ headerShown: false }} />
+        </GestureHandlerRootView>
+      </LiveTrackingSessionSync>
     </QueryClientProvider>
   );
 }
