@@ -23,7 +23,6 @@ import {
   MapPinned,
   Maximize2,
   Navigation,
-  QrCode,
   RefreshCw,
   X,
 } from "lucide-react-native";
@@ -646,16 +645,6 @@ export default function RemoteCheckinScreen() {
           )}
           <Text style={styles.primaryActionText}>{primaryActionText}</Text>
         </Pressable>
-        {!active ? (
-          <Pressable
-            onPress={() => router.push({ pathname: "/scanner", params: { mode: "field-checkin" } })}
-            disabled={busy || !userLoc || !selectedWithinRange}
-            style={({ pressed }) => [styles.qrAction, (pressed || busy) && styles.pressed]}
-          >
-            <QrCode size={21} color="#1A73E8" />
-            <Text style={styles.qrActionText}>QR</Text>
-          </Pressable>
-        ) : null}
       </View>
 
       {!active ? (

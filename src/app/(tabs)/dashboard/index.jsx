@@ -12,7 +12,6 @@ import {
   Calendar,
   Building2,
   Ticket,
-  QrCode,
   DollarSign,
   AlertCircle,
   FileText,
@@ -367,11 +366,6 @@ export default function Dashboard() {
               marginBottom: 16,
             }}
           >
-            <QuickAction
-              icon={QrCode}
-              label="Scan QR"
-              onPress={() => router.push("/scanner")}
-            />
             <QuickAction
               icon={Users}
               label="Guard attendance"
