@@ -81,6 +81,30 @@ export async function apiPostJson(path, body) {
   return { data: json.data, meta: json.meta };
 }
 
+export async function apiPostFormData(path, formData) {
+  const base = getApiBaseUrl();
+  if (!base) throw missingApiUrlError();
+
+  const token = await getBearer();
+  const headers = { Accept: "application/json" };
+  // IMPORTANT: Do not set Content-Type for multipart; fetch will add boundary.
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(joinUrl(base, path), {
+    method: "POST",
+    headers,
+    body: formData,
+  });
+
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json.error) {
+    const msg =
+      json?.error?.message || json?.message || `Request failed (${res.status})`;
+    throw new Error(msg);
+  }
+  return { data: json.data, meta: json.meta };
+}
+
 export async function apiGetJson(path) {
   const base = getApiBaseUrl();
   if (!base) throw missingApiUrlError();

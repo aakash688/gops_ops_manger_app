@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { View, Text, StyleSheet, Platform, NativeModules } from "react-native";
 import MapView, { Marker, Polyline, UrlTile } from "react-native-maps";
 import { CARTO_VOYAGER_URL_TEMPLATE } from "@/config/fieldMapStyle";
+import MapMarkerPin from "@/components/MapMarkerPin";
 
 const MLRN = NativeModules.MLRNModule;
 
@@ -22,9 +23,14 @@ export default function TrackingMap({
   fullScreen = false,
   showsUserLocation = true,
   teamMarkers = [],
+  clients = [],
+  selectedClientId = null,
+  selectedGuardId = null,
+  onSelectClient = null,   // (clientId: string) => void
+  onSelectGuard = null,    // (employeeId: string) => void
   routeCoords = [],
   playbackCoord = null,
-  focusCoord = null, // { latitude, longitude }
+  focusCoord = null,
   focusZoom = 14,
   initialCenter = { latitude: 20.5937, longitude: 78.9629 },
 }) {
@@ -87,37 +93,67 @@ export default function TrackingMap({
           showsMyLocationButton
         >
           <UrlTile urlTemplate={CARTO_VOYAGER_URL_TEMPLATE} maximumZ={22} flipY={false} />
-          {teamMarkers.map((t) =>
-            t.latitude != null && t.longitude != null ? (
+          {/* Client site markers — identical to FieldCheckinMap */}
+          {clients.map((c) => {
+            const sel = c.id === selectedClientId;
+            return c.latitude != null && c.longitude != null ? (
               <Marker
-                key={t.employeeId ?? `${t.latitude},${t.longitude}`}
+                key={`client-${c.id}-${sel ? "sel" : "def"}`}
+                coordinate={{ latitude: c.latitude, longitude: c.longitude }}
+                title={c.clientName}
+                anchor={{ x: 0.5, y: 1 }}
+                tracksViewChanges={sel}
+                onPress={() => onSelectClient?.(c.id)}
+              >
+                <MapMarkerPin
+                  type="client"
+                  color={sel ? "#F9AB00" : "#EA4335"}
+                  selected={sel}
+                  label={sel ? c.clientName : undefined}
+                />
+              </Marker>
+            ) : null;
+          })}
+
+          {/* Team / guard markers */}
+          {teamMarkers.map((t) => {
+            const sel = t.employeeId === selectedGuardId;
+            return t.latitude != null && t.longitude != null ? (
+              <Marker
+                key={`guard-${t.employeeId ?? `${t.latitude},${t.longitude}`}-${sel ? "sel" : "def"}`}
                 coordinate={{ latitude: t.latitude, longitude: t.longitude }}
                 title={t.employeeName}
                 description={t.subtitle}
                 anchor={{ x: 0.5, y: 1 }}
+                tracksViewChanges={sel}
+                onPress={() => onSelectGuard?.(t.employeeId)}
               >
-                <View
-                  style={{
-                    minWidth: 44,
-                    height: 44,
-                    paddingHorizontal: 10,
-                    borderRadius: 22,
-                    backgroundColor: "rgba(255,255,255,0.95)",
-                    borderWidth: 2,
-                    borderColor: t.pinColor || "#007AFF",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <Text style={{ fontSize: 22 }}>🧍</Text>
-                </View>
+                <MapMarkerPin
+                  type="guard"
+                  color={sel ? "#F9AB00" : (t.pinColor || "#1A73E8")}
+                  selected={sel}
+                  label={t.employeeName}
+                />
               </Marker>
-            ) : null,
-          )}
+            ) : null;
+          })}
           {routeCoords.length > 1 ? (
-            <Polyline coordinates={routeCoords} strokeColor="#007AFF" strokeWidth={4} />
+            <Polyline
+              coordinates={routeCoords}
+              strokeColor="#1A73E8"
+              strokeWidth={4}
+              lineDashPattern={undefined}
+              lineJoin="round"
+              lineCap="round"
+            />
           ) : null}
-          {playbackCoord ? <Marker coordinate={playbackCoord} pinColor="orange" title="Playback" /> : null}
+          {playbackCoord ? (
+            <Marker coordinate={playbackCoord} anchor={{ x: 0.5, y: 0.5 }} tracksViewChanges={false}>
+              <View style={styles.playbackDotOuter}>
+                <View style={styles.playbackDotInner} />
+              </View>
+            </Marker>
+          ) : null}
         </MapView>
         <View style={styles.attrib} pointerEvents="none">
           <Text style={styles.attribText}>© OpenStreetMap © CARTO</Text>
@@ -133,6 +169,11 @@ export default function TrackingMap({
       cameraRef={cameraRef}
       showsUserLocation={showsUserLocation}
       teamMarkers={teamMarkers}
+      clients={clients}
+      selectedClientId={selectedClientId}
+      selectedGuardId={selectedGuardId}
+      onSelectClient={onSelectClient}
+      onSelectGuard={onSelectGuard}
       routeCoords={routeCoords}
       playbackCoord={playbackCoord}
       focusCoord={focusCoord}
@@ -166,6 +207,23 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: 4,
     overflow: "hidden",
+  },
+  // Google-style playback dot: orange with white ring
+  playbackDotOuter: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: "rgba(251,140,0,0.25)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  playbackDotInner: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: "#FB8C00",
+    borderWidth: 3,
+    borderColor: "#FFFFFF",
   },
 });
 

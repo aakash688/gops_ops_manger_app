@@ -327,7 +327,7 @@ export default function Dashboard() {
           >
             <QuickAction
               icon={Building2}
-              label="Assigned clients"
+              label="Clients"
               onPress={() => router.push("/clients")}
             />
             <QuickAction

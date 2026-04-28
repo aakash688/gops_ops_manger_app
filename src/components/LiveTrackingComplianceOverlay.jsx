@@ -51,7 +51,7 @@ export default function LiveTrackingComplianceOverlay({ trackingActive }) {
       if (!servicesOk) {
         if (cancelled) return;
         const now = Date.now();
-        const graceMs = 30_000;
+        const graceMs = 10_000; // GPS off: short 10-second grace before siren
         if (candidateRef.current.type !== "gps") {
           candidateRef.current = { type: "gps", since: now };
           setBreach(null);
@@ -70,7 +70,7 @@ export default function LiveTrackingComplianceOverlay({ trackingActive }) {
       if (net.isConnected === false) {
         if (cancelled) return;
         const now = Date.now();
-        const graceMs = 90_000;
+        const graceMs = 45_000; // Network offline: 45-second grace (short, but allows brief drops)
         if (candidateRef.current.type !== "network") {
           candidateRef.current = { type: "network", since: now };
           setBreach(null);

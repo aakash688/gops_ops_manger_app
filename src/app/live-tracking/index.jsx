@@ -11,16 +11,44 @@ import {
   Dimensions,
 } from "react-native";
 import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect";
-import { MapPin, Navigation, Radio, Play, Pause, Footprints, Timer, Search, X } from "lucide-react-native";
+import {
+  MapPin,
+  Navigation,
+  Radio,
+  Play,
+  Pause,
+  Footprints,
+  Timer,
+  Search,
+  X,
+  Wifi,
+  WifiOff,
+  BatteryLow,
+  BatteryMedium,
+  BatteryFull,
+  ShieldCheck,
+  ShieldAlert,
+  Satellite,
+  Building2,
+  UserRound,
+  ExternalLink,
+} from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
 import Slider from "@react-native-community/slider";
 import * as Location from "expo-location";
+import * as Battery from "expo-battery";
+import NetInfo from "@react-native-community/netinfo";
 import StackScreen from "@/components/StackScreen";
 import TrackingMap from "@/components/TrackingMap";
 import { apiGetJson } from "@/utils/api";
 import { useAuthStore } from "@/utils/auth/store";
 import { openMapsDirections, openMapsPin } from "@/utils/openInMaps";
+import {
+  getSessionId,
+  getPingIntervalSec,
+} from "@/services/liveTracking/storage";
+import { isLiveTrackingSessionActive } from "@/services/liveTracking";
 
 function formatAgo(iso) {
   if (!iso) return "—";
@@ -47,6 +75,13 @@ function formatDuration(sec) {
   return `${m}m`;
 }
 
+function BatteryIcon({ level }) {
+  if (level == null) return <BatteryMedium size={15} color="#8E8E93" />;
+  if (level < 20) return <BatteryLow size={15} color="#FF3B30" />;
+  if (level < 60) return <BatteryMedium size={15} color="#FF9500" />;
+  return <BatteryFull size={15} color="#30D158" />;
+}
+
 const { width: WIN_W } = Dimensions.get("window");
 
 export default function LiveTrackingScreen() {
@@ -70,7 +105,42 @@ export default function LiveTrackingScreen() {
   const [playing, setPlaying] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [selectedTarget, setSelectedTarget] = useState(null); // { type, id, name, subtitle, latitude, longitude }
+  const [selectedTarget, setSelectedTarget] = useState(null);
+
+  // My session health state
+  const [mySession, setMySession] = useState({
+    active: false,
+    intervalSec: 0,
+    battery: null,
+    network: "UNKNOWN",
+    lastPingAt: null,
+  });
+
+  const glassFallback = isLiquidGlassAvailable() ? {} : { backgroundColor: "#fff" };
+
+  const loadMySessionHealth = useCallback(async () => {
+    try {
+      const [active, intervalSec, batteryRaw, netState] = await Promise.all([
+        isLiveTrackingSessionActive().catch(() => false),
+        getPingIntervalSec().catch(() => 0),
+        Battery.getBatteryLevelAsync().catch(() => null),
+        NetInfo.fetch().catch(() => null),
+      ]);
+      const battery = typeof batteryRaw === "number" && !Number.isNaN(batteryRaw)
+        ? Math.round(batteryRaw * 100)
+        : null;
+      let network = "UNKNOWN";
+      if (netState) {
+        if (!netState.isConnected) network = "OFFLINE";
+        else if (netState.type === "wifi") network = "WiFi";
+        else if (netState.type === "cellular") network = `${netState.details?.cellularGeneration ?? "Cell"}`;
+        else network = "Online";
+      }
+      setMySession((prev) => ({ ...prev, active, intervalSec, battery, network }));
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   const loadTeam = useCallback(async () => {
     setTeamError(null);
@@ -112,6 +182,12 @@ export default function LiveTrackingScreen() {
       setRoute(data ?? null);
       setPlaybackIndex(0);
       setPlaying(false);
+      // Update last ping time from route points
+      const pts = data?.points;
+      if (Array.isArray(pts) && pts.length > 0) {
+        const last = pts[pts.length - 1];
+        setMySession((prev) => ({ ...prev, lastPingAt: last.trackedAt ?? last.timestamp ?? null }));
+      }
     } catch (e) {
       setRoute(null);
       setRouteError(e instanceof Error ? e.message : "Could not load route");
@@ -164,32 +240,23 @@ export default function LiveTrackingScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      loadMySessionHealth();
       loadTeam();
       loadMyRouteToday();
       loadClients();
       loadClientHaltsToday();
       loadComplianceTimelineToday();
-    }, [loadTeam, loadMyRouteToday, loadClients, loadClientHaltsToday, loadComplianceTimelineToday]),
+    }, [loadMySessionHealth, loadTeam, loadMyRouteToday, loadClients, loadClientHaltsToday, loadComplianceTimelineToday]),
   );
 
   const mapInitial = useMemo(() => {
     const withLoc = team.filter((t) => t.latitude != null && t.longitude != null);
     if (withLoc.length === 0) {
-      return {
-        latitude: 20.5937,
-        longitude: 78.9629,
-        latitudeDelta: 8,
-        longitudeDelta: 8,
-      };
+      return { latitude: 20.5937, longitude: 78.9629, latitudeDelta: 8, longitudeDelta: 8 };
     }
     const lat = withLoc.reduce((s, t) => s + t.latitude, 0) / withLoc.length;
     const lng = withLoc.reduce((s, t) => s + t.longitude, 0) / withLoc.length;
-    return {
-      latitude: lat,
-      longitude: lng,
-      latitudeDelta: 0.12,
-      longitudeDelta: 0.12,
-    };
+    return { latitude: lat, longitude: lng, latitudeDelta: 0.12, longitudeDelta: 0.12 };
   }, [team]);
 
   const routeCoords = useMemo(() => {
@@ -202,8 +269,7 @@ export default function LiveTrackingScreen() {
 
   const routeCoordsPlayback = useMemo(() => {
     if (!routeCoords.length) return [];
-    const end = Math.min(playbackIndex + 1, routeCoords.length);
-    return routeCoords.slice(0, end);
+    return routeCoords.slice(0, Math.min(playbackIndex + 1, routeCoords.length));
   }, [routeCoords, playbackIndex]);
 
   useEffect(() => {
@@ -211,10 +277,7 @@ export default function LiveTrackingScreen() {
     const stepMs = Math.max(60, Math.round(320 / playbackSpeed));
     const id = setInterval(() => {
       setPlaybackIndex((i) => {
-        if (i >= routeCoords.length - 1) {
-          setPlaying(false);
-          return i;
-        }
+        if (i >= routeCoords.length - 1) { setPlaying(false); return i; }
         return i + 1;
       });
     }, stepMs);
@@ -223,15 +286,14 @@ export default function LiveTrackingScreen() {
 
   const playbackPosition = routeCoords[Math.min(playbackIndex, routeCoords.length - 1)];
   const teamMarkers = useMemo(
-    () =>
-      team.map((t) => ({
-        employeeId: t.employeeId,
-        employeeName: t.employeeName,
-        latitude: t.latitude,
-        longitude: t.longitude,
-        subtitle: `${formatAgo(t.trackedAt)}${t.sessionOpen ? " · live session" : ""}`,
-        pinColor: t.sessionOpen ? "#007AFF" : "#8E8E93",
-      })),
+    () => team.map((t) => ({
+      employeeId: t.employeeId,
+      employeeName: t.employeeName,
+      latitude: t.latitude,
+      longitude: t.longitude,
+      subtitle: `${formatAgo(t.trackedAt)}${t.sessionOpen ? " · live session" : ""}`,
+      pinColor: t.sessionOpen ? "#007AFF" : "#8E8E93",
+    })),
     [team],
   );
 
@@ -239,27 +301,56 @@ export default function LiveTrackingScreen() {
     ? { latitude: Number(selectedTarget.latitude), longitude: Number(selectedTarget.longitude) }
     : null;
 
+  const selectedClientId = selectedTarget?.type === "client" ? String(selectedTarget.id) : null;
+  const selectedGuardId = selectedTarget?.type === "team" ? String(selectedTarget.id) : null;
+
+  const handleSelectClient = useCallback((clientId) => {
+    const c = clients.find((x) => x.id === clientId);
+    if (!c) return;
+    setSelectedTarget({
+      type: "client",
+      id: c.id,
+      name: c.clientName,
+      subtitle: [c.deploymentAddress, c.city].filter(Boolean).join(", ") || "Site",
+      latitude: c.latitude,
+      longitude: c.longitude,
+      extra: { address: c.deploymentAddress ?? null, city: c.city ?? null },
+    });
+  }, [clients]);
+
+  const handleSelectGuard = useCallback((guardEmployeeId) => {
+    const t = team.find((x) => x.employeeId === guardEmployeeId);
+    if (!t) return;
+    setSelectedTarget({
+      type: "team",
+      id: t.employeeId,
+      name: t.employeeName,
+      subtitle: formatAgo(t.trackedAt),
+      latitude: t.latitude,
+      longitude: t.longitude,
+      extra: {
+        trackedAt: t.trackedAt ?? null,
+        batteryLevel: t.batteryLevel ?? null,
+        sessionOpen: t.sessionOpen ?? false,
+        networkType: t.networkType ?? null,
+      },
+    });
+  }, [team]);
+
   const searchItems = useMemo(() => {
     const q = query.trim().toLowerCase();
     const teamItems = team
       .filter((t) => t.latitude != null && t.longitude != null)
       .map((t) => ({
-        type: "team",
-        id: t.employeeId,
-        name: t.employeeName,
+        type: "team", id: t.employeeId, name: t.employeeName,
         subtitle: `${formatAgo(t.trackedAt)}${t.sessionOpen ? " · session active" : ""}`,
-        latitude: t.latitude,
-        longitude: t.longitude,
+        latitude: t.latitude, longitude: t.longitude,
       }));
     const clientItems = clients
       .filter((c) => c.latitude != null && c.longitude != null)
       .map((c) => ({
-        type: "client",
-        id: c.id,
-        name: c.clientName,
-        subtitle: "Site",
-        latitude: c.latitude,
-        longitude: c.longitude,
+        type: "client", id: c.id, name: c.clientName,
+        subtitle: "Site", latitude: c.latitude, longitude: c.longitude,
       }));
     const all = [...clientItems, ...teamItems];
     if (!q) return all.slice(0, 60);
@@ -268,24 +359,102 @@ export default function LiveTrackingScreen() {
 
   const openDirectionsToTarget = useCallback(async () => {
     if (!selectedTarget) return;
+    // Use last-known OS location (instant) so the map app opens immediately.
+    // getCurrentPositionAsync waits for a live GPS fix and adds 3-8s of delay.
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") return;
-      const cur = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      const { latitude, longitude } = cur.coords;
-      await openMapsDirections(latitude, longitude, selectedTarget.latitude, selectedTarget.longitude);
+      const last = await Location.getLastKnownPositionAsync({ maxAge: 5 * 60 * 1000 });
+      const origin = last?.coords ?? null;
+      await openMapsDirections(
+        origin?.latitude ?? null,
+        origin?.longitude ?? null,
+        selectedTarget.latitude,
+        selectedTarget.longitude,
+      );
     } catch {
+      // If even getLastKnownPosition fails, open with destination only — map app handles routing from device location.
       await openMapsDirections(null, null, selectedTarget.latitude, selectedTarget.longitude);
     }
   }, [selectedTarget]);
 
+  const refreshAll = () => {
+    loadMySessionHealth();
+    loadTeam();
+    loadMyRouteToday();
+    loadClients();
+    loadClientHaltsToday();
+    loadComplianceTimelineToday();
+  };
+
+  const recentCompliance = complianceTl.slice(-6).reverse();
+  const liveTeam = team.filter((t) => t.sessionOpen);
+  const offlineTeam = team.filter((t) => !t.sessionOpen);
+
   return (
-    <StackScreen title="Live tracking" subtitle="Team positions & your route (today)">
+    <StackScreen title="Live tracking" subtitle="Team positions & your route (today)" contentStyle={{ paddingHorizontal: 16 }}>
+
+      {/* ─── My Session Health Card ─── */}
+      <GlassView style={[styles.sessionCard, glassFallback]}>
+        <View style={styles.sessionCardTop}>
+          <View style={[styles.sessionDot, mySession.active ? styles.dotLive : styles.dotOff]} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.sessionCardTitle}>
+              {mySession.active ? "Live session active" : "No active session"}
+            </Text>
+            <Text style={styles.sessionCardSub}>
+              {mySession.active
+                ? `Pinging every ${mySession.intervalSec}s · last: ${formatAgo(mySession.lastPingAt)}`
+                : "Check in on Remote Check-in to start tracking"}
+            </Text>
+          </View>
+          {mySession.active ? (
+            <ShieldCheck size={22} color="#30D158" />
+          ) : (
+            <ShieldAlert size={22} color="#8E8E93" />
+          )}
+        </View>
+        <View style={styles.healthRow}>
+          <View style={styles.healthChip}>
+            <BatteryIcon level={mySession.battery} />
+            <Text style={styles.healthLabel}>Battery</Text>
+            <Text style={[styles.healthVal, mySession.battery != null && mySession.battery < 20 ? styles.textRed : styles.textPrimary]}>
+              {mySession.battery != null ? `${mySession.battery}%` : "—"}
+            </Text>
+          </View>
+          <View style={styles.healthChip}>
+            {mySession.network === "OFFLINE" ? <WifiOff size={15} color="#FF3B30" /> : <Wifi size={15} color="#30D158" />}
+            <Text style={styles.healthLabel}>Network</Text>
+            <Text style={[styles.healthVal, mySession.network === "OFFLINE" ? styles.textRed : styles.textPrimary]}>
+              {mySession.network}
+            </Text>
+          </View>
+          <View style={styles.healthChip}>
+            <Satellite size={15} color={mySession.active ? "#30D158" : "#8E8E93"} />
+            <Text style={styles.healthLabel}>GPS</Text>
+            <Text style={[styles.healthVal, mySession.active ? styles.textGreen : styles.textMuted]}>
+              {mySession.active ? "Active" : "Off"}
+            </Text>
+          </View>
+          <View style={styles.healthChip}>
+            <Radio size={15} color={complianceTl.some((e) => !e.endedAt) ? "#FF3B30" : "#30D158"} />
+            <Text style={styles.healthLabel}>Compliance</Text>
+            <Text style={[styles.healthVal, complianceTl.some((e) => !e.endedAt) ? styles.textRed : styles.textGreen]}>
+              {complianceTl.some((e) => !e.endedAt) ? "Issue" : "OK"}
+            </Text>
+          </View>
+        </View>
+      </GlassView>
+
+      {/* ─── Map ─── */}
       {Platform.OS !== "web" ? (
         <View style={styles.mapWrap}>
           <TrackingMap
-            height={220}
+            height={330}
             teamMarkers={teamMarkers}
+            clients={clients}
+            selectedClientId={selectedClientId}
+            selectedGuardId={selectedGuardId}
+            onSelectClient={handleSelectClient}
+            onSelectGuard={handleSelectGuard}
             routeCoords={routeCoordsPlayback}
             playbackCoord={playbackPosition ?? null}
             focusCoord={focusCoord}
@@ -294,14 +463,56 @@ export default function LiveTrackingScreen() {
           <View style={styles.mapAttrib} pointerEvents="none">
             <Text style={styles.mapAttribText}>© OpenStreetMap © CARTO</Text>
           </View>
+
+          {/* Google Maps-style selection card overlaid at the bottom of the map */}
+          {selectedTarget ? (
+            <View style={styles.mapSelectionCard}>
+              <View style={styles.mapSelectionCardInner}>
+                <View style={[
+                  styles.mapSelectionIcon,
+                  selectedTarget.type === "client" ? styles.mapSelIconClient : styles.mapSelIconGuard,
+                ]}>
+                  {selectedTarget.type === "client"
+                    ? <Building2 size={20} color="#EA4335" />
+                    : <UserRound size={20} color={selectedTarget.extra?.sessionOpen ? "#1A73E8" : "#8E8E93"} />}
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.mapSelectionName} numberOfLines={1}>{selectedTarget.name}</Text>
+                  {selectedTarget.type === "team" ? (
+                    <View style={styles.mapSelMetaRow}>
+                      <Text style={styles.mapSelMeta}>
+                        {selectedTarget.extra?.sessionOpen ? "● Live" : "○ Offline"}
+                        {" · "}
+                        {formatAgo(selectedTarget.extra?.trackedAt)}
+                      </Text>
+                      {selectedTarget.extra?.batteryLevel != null ? (
+                        <View style={styles.mapSelBattery}>
+                          <BatteryIcon level={selectedTarget.extra.batteryLevel} />
+                          <Text style={styles.mapSelMeta}>{selectedTarget.extra.batteryLevel}%</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                  ) : (
+                    <Text style={styles.mapSelMeta} numberOfLines={1}>{selectedTarget.subtitle}</Text>
+                  )}
+                </View>
+                <View style={styles.mapSelActions}>
+                  <Pressable onPress={openDirectionsToTarget} style={styles.mapSelActionBtn} hitSlop={8}>
+                    <Navigation size={18} color="#1A73E8" />
+                  </Pressable>
+                  <Pressable onPress={() => openMapsPin(selectedTarget.latitude, selectedTarget.longitude, selectedTarget.name)} style={styles.mapSelActionBtn} hitSlop={8}>
+                    <ExternalLink size={18} color="#1A73E8" />
+                  </Pressable>
+                  <Pressable onPress={() => setSelectedTarget(null)} style={styles.mapSelCloseBtn} hitSlop={8}>
+                    <X size={16} color="#636366" />
+                  </Pressable>
+                </View>
+              </View>
+            </View>
+          ) : null}
         </View>
       ) : (
-        <GlassView
-          style={[
-            styles.webMapPlaceholder,
-            isLiquidGlassAvailable() ? {} : { opacity: 0.95, backgroundColor: "#E8F4FF" },
-          ]}
-        >
+        <GlassView style={[styles.webMapPlaceholder, glassFallback]}>
           <MapPin size={36} color="#007AFF" />
           <Text style={{ marginTop: 10, fontWeight: "700", color: "#000" }}>Map on device</Text>
           <Text style={{ fontSize: 13, color: "#666", marginTop: 4, textAlign: "center" }}>
@@ -310,85 +521,34 @@ export default function LiveTrackingScreen() {
         </GlassView>
       )}
 
+      {/* ─── Toolbar ─── */}
       <View style={styles.toolbar}>
-        <Pressable
-          onPress={() => {
-            loadTeam();
-            loadMyRouteToday();
-            loadClients();
-            loadClientHaltsToday();
-            loadComplianceTimelineToday();
-          }}
-          style={({ pressed }) => [styles.toolBtn, pressed && { opacity: 0.88 }]}
-        >
+        <Pressable onPress={refreshAll} style={({ pressed }) => [styles.toolBtn, pressed && { opacity: 0.88 }]}>
           <Radio size={18} color="#000" />
           <Text style={styles.toolBtnTextDark}>Refresh</Text>
         </Pressable>
-
-        <Pressable
-          onPress={() => setSearchOpen(true)}
-          style={({ pressed }) => [styles.toolBtn, pressed && { opacity: 0.88 }]}
-        >
+        <Pressable onPress={() => setSearchOpen(true)} style={({ pressed }) => [styles.toolBtn, pressed && { opacity: 0.88 }]}>
           <Search size={18} color="#000" />
           <Text style={styles.toolBtnTextDark}>Search</Text>
         </Pressable>
-
         {selectedTarget ? (
-          <Pressable
-            onPress={openDirectionsToTarget}
-            style={({ pressed }) => [styles.toolBtnPrimary, pressed && { opacity: 0.88 }]}
-          >
+          <Pressable onPress={openDirectionsToTarget} style={({ pressed }) => [styles.toolBtnPrimary, pressed && { opacity: 0.88 }]}>
             <Navigation size={18} color="#FFF" />
             <Text style={styles.toolBtnTextLight}>Directions</Text>
           </Pressable>
         ) : null}
       </View>
 
-      {teamLoading ? (
-        <ActivityIndicator style={{ marginVertical: 12 }} />
-      ) : teamError ? (
-        <Text style={styles.err}>{teamError}</Text>
-      ) : null}
-
-      {clientsError ? <Text style={styles.err}>{clientsError}</Text> : null}
-
-      <Text style={styles.sectionTitle}>Team</Text>
-      <ScrollView style={{ maxHeight: 220 }} keyboardShouldPersistTaps="handled">
-        {team.map((t) => (
-          <GlassView
-            key={t.employeeId}
-            style={[
-              styles.card,
-              isLiquidGlassAvailable() ? {} : { opacity: 0.95, backgroundColor: "#ffffff" },
-            ]}
-          >
-            <Text style={styles.cardTitle}>{t.employeeName}</Text>
-            <Text style={styles.cardMeta}>
-              {t.latitude != null && t.longitude != null
-                ? `${t.latitude.toFixed(5)}, ${t.longitude.toFixed(5)}`
-                : "No position yet"}
-            </Text>
-            <Text style={styles.cardHighlight}>
-              {formatAgo(t.trackedAt)}
-              {t.batteryLevel != null ? ` · ${t.batteryLevel}% battery` : ""}
-              {t.sessionOpen ? " · session active" : ""}
-            </Text>
-          </GlassView>
-        ))}
-        {!team.length && !teamLoading ? (
-          <Text style={styles.muted}>No recent GPS points for your organization.</Text>
-        ) : null}
-      </ScrollView>
-
-      <Text style={[styles.sectionTitle, { marginTop: 18 }]}>My route today</Text>
+      {/* ─── My Route Today ─── */}
+      <Text style={styles.sectionTitle}>My route today</Text>
       {!employeeId ? (
-        <Text style={styles.muted}>Employee id not loaded yet — open Profile once, then return.</Text>
+        <Text style={styles.muted}>Employee id not loaded — open Profile once, then return.</Text>
       ) : routeLoading ? (
         <ActivityIndicator style={{ marginVertical: 8 }} />
       ) : routeError ? (
         <Text style={styles.err}>{routeError}</Text>
       ) : route?.points?.length ? (
-        <>
+        <GlassView style={[styles.card, glassFallback]}>
           <View style={styles.statsRow}>
             <View style={styles.stat}>
               <Footprints size={18} color="#007AFF" />
@@ -405,24 +565,22 @@ export default function LiveTrackingScreen() {
               <Text style={styles.statLabel}>Halts</Text>
               <Text style={styles.statVal}>{route.halts?.length ?? 0}</Text>
             </View>
+            <View style={styles.stat}>
+              <Radio size={18} color="#007AFF" />
+              <Text style={styles.statLabel}>Pings</Text>
+              <Text style={styles.statVal}>{route.points?.length ?? 0}</Text>
+            </View>
           </View>
           <View style={styles.playbackBar}>
-            <Pressable
-              onPress={() => setPlaying((p) => !p)}
-              style={({ pressed }) => [styles.playBtn, pressed && { opacity: 0.85 }]}
-            >
-              {playing ? (
-                <Pause size={22} color="#FFF" />
-              ) : (
-                <Play size={22} color="#FFF" style={{ marginLeft: 3 }} />
-              )}
+            <Pressable onPress={() => setPlaying((p) => !p)} style={({ pressed }) => [styles.playBtn, pressed && { opacity: 0.85 }]}>
+              {playing ? <Pause size={22} color="#FFF" /> : <Play size={22} color="#FFF" style={{ marginLeft: 3 }} />}
             </Pressable>
             <View style={{ flex: 1, marginLeft: 12 }}>
               <Text style={styles.sliderLabel}>
                 Playback {playbackIndex + 1} / {routeCoords.length} · {playbackSpeed}x
               </Text>
               <Slider
-                style={{ width: WIN_W - 120, height: 36 }}
+                style={{ width: WIN_W - 134, height: 36 }}
                 minimumValue={0}
                 maximumValue={Math.max(0, routeCoords.length - 1)}
                 step={1}
@@ -436,81 +594,125 @@ export default function LiveTrackingScreen() {
           </View>
           <View style={styles.speedRow}>
             {[1, 2, 5].map((s) => (
-              <Pressable
-                key={s}
-                onPress={() => setPlaybackSpeed(s)}
-                style={[
-                  styles.speedChip,
-                  playbackSpeed === s && styles.speedChipOn,
-                ]}
-              >
-                <Text style={[styles.speedChipText, playbackSpeed === s && styles.speedChipTextOn]}>
-                  {s}x
-                </Text>
+              <Pressable key={s} onPress={() => setPlaybackSpeed(s)} style={[styles.speedChip, playbackSpeed === s && styles.speedChipOn]}>
+                <Text style={[styles.speedChipText, playbackSpeed === s && styles.speedChipTextOn]}>{s}x</Text>
               </Pressable>
             ))}
           </View>
-        </>
+        </GlassView>
       ) : (
         <Text style={styles.muted}>No route points recorded for you today.</Text>
       )}
 
-      <Text style={[styles.sectionTitle, { marginTop: 18 }]}>Visited sites today (auto)</Text>
+      {/* ─── Team Members ─── */}
+      <View style={styles.sectionHeaderRow}>
+        <Text style={styles.sectionTitle}>Team</Text>
+        {teamLoading ? <ActivityIndicator size="small" color="#007AFF" /> : null}
+        <Text style={styles.sectionBadge}>{liveTeam.length} live · {offlineTeam.length} offline</Text>
+      </View>
+      {teamError ? <Text style={styles.err}>{teamError}</Text> : null}
+      {clientsError ? <Text style={styles.err}>{clientsError}</Text> : null}
+
+      {liveTeam.length > 0 && (
+        <ScrollView style={{ maxHeight: 200 }} keyboardShouldPersistTaps="handled">
+          {liveTeam.map((t) => (
+            <Pressable
+              key={t.employeeId}
+              onPress={() => handleSelectGuard(t.employeeId)}
+            >
+              <GlassView style={[styles.teamCard, glassFallback]}>
+                <View style={styles.teamCardLeft}>
+                  <View style={styles.liveIndicator} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.teamCardName}>{t.employeeName}</Text>
+                    <Text style={styles.teamCardMeta}>Last seen {formatAgo(t.trackedAt)}</Text>
+                  </View>
+                </View>
+                <View style={styles.teamCardRight}>
+                  {t.batteryLevel != null ? (
+                    <View style={styles.teamChip}>
+                      <BatteryIcon level={t.batteryLevel} />
+                      <Text style={styles.teamChipText}>{t.batteryLevel}%</Text>
+                    </View>
+                  ) : null}
+                  <Text style={styles.livePill}>LIVE</Text>
+                </View>
+              </GlassView>
+            </Pressable>
+          ))}
+        </ScrollView>
+      )}
+
+      {offlineTeam.length > 0 && (
+        <ScrollView style={{ maxHeight: 160 }} keyboardShouldPersistTaps="handled">
+          {offlineTeam.map((t) => (
+            <Pressable
+              key={t.employeeId}
+              onPress={() => handleSelectGuard(t.employeeId)}
+            >
+              <GlassView style={[styles.teamCard, styles.teamCardOff, glassFallback]}>
+                <View style={styles.teamCardLeft}>
+                  <View style={styles.offIndicator} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.teamCardName, { color: "#636366" }]}>{t.employeeName}</Text>
+                    <Text style={styles.teamCardMeta}>Last seen {formatAgo(t.trackedAt)}</Text>
+                  </View>
+                </View>
+              </GlassView>
+            </Pressable>
+          ))}
+        </ScrollView>
+      )}
+
+      {!team.length && !teamLoading ? (
+        <Text style={styles.muted}>No recent GPS points for your organization.</Text>
+      ) : null}
+
+      {/* ─── Visited Sites Today ─── */}
+      <Text style={[styles.sectionTitle, { marginTop: 18 }]}>Visited sites today (auto-detected)</Text>
       {clientHaltsLoading ? (
         <ActivityIndicator style={{ marginVertical: 10 }} />
       ) : clientHaltsError ? (
         <Text style={styles.err}>{clientHaltsError}</Text>
       ) : clientHalts?.perClient?.length ? (
-        <GlassView
-          style={[
-            styles.card,
-            isLiquidGlassAvailable() ? {} : { opacity: 0.95, backgroundColor: "#ffffff" },
-          ]}
-        >
+        <GlassView style={[styles.card, glassFallback]}>
           {clientHalts.perClient.slice(0, 8).map((c) => (
-            <View
-              key={c.clientId}
-              style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 8 }}
-            >
-              <Text style={{ fontWeight: "800", color: "#000", flex: 1, paddingRight: 10 }} numberOfLines={1}>
-                {c.clientName}
-              </Text>
-              <Text style={{ fontWeight: "800", color: "#007AFF" }}>
-                {Math.round((c.totalDurationSec ?? 0) / 60)}m · {c.haltCount}
+            <View key={c.clientId} style={styles.siteRow}>
+              <View style={styles.siteDot} />
+              <Text style={styles.siteRowName} numberOfLines={1}>{c.clientName}</Text>
+              <Text style={styles.siteRowVal}>
+                {Math.round((c.totalDurationSec ?? 0) / 60)}m · {c.haltCount} halt{c.haltCount === 1 ? "" : "s"}
               </Text>
             </View>
           ))}
           {clientHalts.perClient.length > 8 ? (
-            <Text style={[styles.muted, { marginTop: 6 }]}>
-              +{clientHalts.perClient.length - 8} more
-            </Text>
+            <Text style={[styles.muted, { marginTop: 6 }]}>+{clientHalts.perClient.length - 8} more</Text>
           ) : null}
         </GlassView>
       ) : (
         <Text style={styles.muted}>No client halts detected yet (needs a few minutes of pings).</Text>
       )}
 
-      <Text style={[styles.sectionTitle, { marginTop: 18 }]}>Compliance timeline (today)</Text>
-      {complianceLoading ? (
-        <ActivityIndicator style={{ marginVertical: 10 }} />
-      ) : complianceError ? (
+      {/* ─── Compliance Timeline ─── */}
+      <View style={styles.sectionHeaderRow}>
+        <Text style={[styles.sectionTitle, { marginTop: 18 }]}>Compliance (today)</Text>
+        {complianceLoading ? <ActivityIndicator size="small" color="#007AFF" style={{ marginTop: 18 }} /> : null}
+      </View>
+      {complianceError ? (
         <Text style={styles.err}>{complianceError}</Text>
-      ) : complianceTl?.length ? (
-        <GlassView
-          style={[
-            styles.card,
-            isLiquidGlassAvailable() ? {} : { opacity: 0.95, backgroundColor: "#ffffff" },
-          ]}
-        >
-          {complianceTl.slice(-8).map((e) => (
-            <View key={e.id} style={{ paddingVertical: 8 }}>
-              <Text style={{ fontWeight: "900", color: "#000" }}>
-                {String(e.type).replace(/_/g, " ")}
-                {e.endedAt ? "" : " · ACTIVE"}
-              </Text>
-              <Text style={styles.muted}>
-                {formatAgo(e.startedAt)} {e.endedAt ? `→ ended ${formatAgo(e.endedAt)}` : ""}
-              </Text>
+      ) : recentCompliance.length ? (
+        <GlassView style={[styles.card, glassFallback]}>
+          {recentCompliance.map((e) => (
+            <View key={e.id} style={styles.complianceRow}>
+              <View style={[styles.complianceDot, !e.endedAt ? styles.complianceDotActive : styles.complianceDotOk]} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.complianceType}>{String(e.type ?? "").replace(/_/g, " ")}</Text>
+                <Text style={styles.complianceMeta}>
+                  {formatAgo(e.startedAt)}
+                  {e.endedAt ? ` → resolved ${formatAgo(e.endedAt)}` : " · still active"}
+                </Text>
+              </View>
+              {!e.endedAt ? <Text style={styles.complianceActivePill}>ACTIVE</Text> : null}
             </View>
           ))}
         </GlassView>
@@ -518,6 +720,9 @@ export default function LiveTrackingScreen() {
         <Text style={styles.muted}>No compliance issues recorded today.</Text>
       )}
 
+      <View style={{ height: 32 }} />
+
+      {/* ─── Search Modal ─── */}
       <Modal visible={searchOpen} animationType="slide" onRequestClose={() => setSearchOpen(false)}>
         <View style={styles.searchModal}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
@@ -537,10 +742,7 @@ export default function LiveTrackingScreen() {
                 </Pressable>
               ) : null}
             </View>
-            <Pressable
-              onPress={() => setSearchOpen(false)}
-              style={({ pressed }) => [{ padding: 8 }, pressed && { opacity: 0.8 }]}
-            >
+            <Pressable onPress={() => setSearchOpen(false)} style={({ pressed }) => [{ padding: 8 }, pressed && { opacity: 0.8 }]}>
               <Text style={{ fontWeight: "800", color: "#007AFF" }}>Done</Text>
             </Pressable>
           </View>
@@ -551,20 +753,10 @@ export default function LiveTrackingScreen() {
               return (
                 <Pressable
                   key={`${x.type}:${x.id}`}
-                  onPress={() => {
-                    setSelectedTarget(x);
-                    setSearchOpen(false);
-                  }}
-                  style={({ pressed }) => [
-                    styles.pickRow,
-                    isSel && styles.pickRowSelected,
-                    pressed && { opacity: 0.9 },
-                  ]}
+                  onPress={() => { setSelectedTarget(x); setSearchOpen(false); }}
+                  style={({ pressed }) => [styles.pickRow, isSel && styles.pickRowSelected, pressed && { opacity: 0.9 }]}
                 >
-                  <Text style={styles.pickTitle}>
-                    {x.type === "client" ? "🏢 " : "🧍 "}
-                    {x.name}
-                  </Text>
+                  <Text style={styles.pickTitle}>{x.type === "client" ? "🏢 " : "🧍 "}{x.name}</Text>
                   <Text style={styles.pickSub}>{x.subtitle}</Text>
                 </Pressable>
               );
@@ -574,17 +766,11 @@ export default function LiveTrackingScreen() {
 
           {selectedTarget ? (
             <View style={{ marginTop: 12, flexDirection: "row", gap: 10 }}>
-              <Pressable
-                onPress={() => openMapsPin(selectedTarget.latitude, selectedTarget.longitude, selectedTarget.name)}
-                style={({ pressed }) => [styles.quickBtn, pressed && { opacity: 0.9 }]}
-              >
+              <Pressable onPress={() => openMapsPin(selectedTarget.latitude, selectedTarget.longitude, selectedTarget.name)} style={({ pressed }) => [styles.quickBtn, pressed && { opacity: 0.9 }]}>
                 <MapPin size={18} color="#000" />
                 <Text style={styles.quickBtnText}>Open in maps</Text>
               </Pressable>
-              <Pressable
-                onPress={openDirectionsToTarget}
-                style={({ pressed }) => [styles.quickBtnPrimary, pressed && { opacity: 0.9 }]}
-              >
+              <Pressable onPress={openDirectionsToTarget} style={({ pressed }) => [styles.quickBtnPrimary, pressed && { opacity: 0.9 }]}>
                 <Navigation size={18} color="#FFF" />
                 <Text style={styles.quickBtnTextLight}>Directions</Text>
               </Pressable>
@@ -597,9 +783,41 @@ export default function LiveTrackingScreen() {
 }
 
 const styles = StyleSheet.create({
+  // ── Session health card
+  sessionCard: {
+    padding: 16,
+    borderRadius: 20,
+    marginBottom: 14,
+    overflow: "hidden",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(0,122,255,0.15)",
+  },
+  sessionCardTop: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 14 },
+  sessionDot: { width: 10, height: 10, borderRadius: 5 },
+  dotLive: { backgroundColor: "#30D158" },
+  dotOff: { backgroundColor: "#8E8E93" },
+  sessionCardTitle: { fontSize: 16, fontWeight: "900", color: "#000" },
+  sessionCardSub: { fontSize: 12, color: "#636366", fontWeight: "600", marginTop: 2 },
+  healthRow: { flexDirection: "row", gap: 8 },
+  healthChip: {
+    flex: 1,
+    backgroundColor: "rgba(242,242,247,0.9)",
+    borderRadius: 12,
+    padding: 10,
+    alignItems: "center",
+    gap: 4,
+  },
+  healthLabel: { fontSize: 10, color: "#636366", fontWeight: "700" },
+  healthVal: { fontSize: 12, fontWeight: "900" },
+  textPrimary: { color: "#000" },
+  textGreen: { color: "#30D158" },
+  textRed: { color: "#FF3B30" },
+  textMuted: { color: "#8E8E93" },
+
+  // ── Map
   mapWrap: {
-    height: 220,
-    borderRadius: 16,
+    height: 330,
+    borderRadius: 18,
     overflow: "hidden",
     marginBottom: 12,
     borderWidth: 1,
@@ -625,11 +843,9 @@ const styles = StyleSheet.create({
     borderColor: "rgba(0,122,255,0.2)",
     borderStyle: "dashed",
   },
-  toolbar: {
-    flexDirection: "row",
-    gap: 10,
-    marginBottom: 8,
-  },
+
+  // ── Toolbar
+  toolbar: { flexDirection: "row", gap: 10, marginBottom: 14 },
   toolBtn: {
     flex: 1,
     backgroundColor: "#F2F2F7",
@@ -652,24 +868,89 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   toolBtnTextLight: { color: "#FFF", fontWeight: "900" },
+
+  // ── Sections
   sectionTitle: { fontSize: 16, fontWeight: "700", marginBottom: 10, color: "#000" },
-  card: {
-    padding: 14,
+  sectionHeaderRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10 },
+  sectionBadge: { fontSize: 12, color: "#636366", fontWeight: "700" },
+
+  // ── Generic card
+  card: { padding: 14, borderRadius: 16, overflow: "hidden", marginBottom: 12 },
+
+  // ── Route stats
+  statsRow: { flexDirection: "row", gap: 8, marginBottom: 12 },
+  stat: { flex: 1, backgroundColor: "rgba(242,242,247,0.9)", borderRadius: 12, padding: 10, alignItems: "center" },
+  statLabel: { fontSize: 10, color: "#636366", marginTop: 4, fontWeight: "700" },
+  statVal: { fontSize: 14, fontWeight: "900", color: "#000", marginTop: 2 },
+  playbackBar: { flexDirection: "row", alignItems: "center", marginBottom: 8 },
+  playBtn: { width: 48, height: 48, borderRadius: 24, backgroundColor: "#007AFF", alignItems: "center", justifyContent: "center" },
+  sliderLabel: { fontSize: 12, color: "#636366", marginBottom: -4 },
+  speedRow: { flexDirection: "row", gap: 8 },
+  speedChip: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, backgroundColor: "#E5E5EA" },
+  speedChipOn: { backgroundColor: "#007AFF" },
+  speedChipText: { fontWeight: "700", color: "#000" },
+  speedChipTextOn: { color: "#FFF" },
+
+  // ── Team cards
+  teamCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: 12,
     borderRadius: 14,
+    marginBottom: 8,
     overflow: "hidden",
-    marginBottom: 10,
   },
-  cardTitle: { fontWeight: "700", color: "#000" },
-  cardMeta: { color: "#666", marginTop: 4, fontSize: 13 },
-  cardHighlight: { color: "#007AFF", marginTop: 6, fontSize: 13 },
+  teamCardOff: { opacity: 0.75 },
+  teamCardLeft: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1 },
+  liveIndicator: { width: 9, height: 9, borderRadius: 5, backgroundColor: "#30D158" },
+  offIndicator: { width: 9, height: 9, borderRadius: 5, backgroundColor: "#C7C7CC" },
+  teamCardName: { fontSize: 14, fontWeight: "800", color: "#000" },
+  teamCardMeta: { fontSize: 12, color: "#636366", fontWeight: "600", marginTop: 2 },
+  teamCardRight: { flexDirection: "row", alignItems: "center", gap: 8 },
+  teamChip: { flexDirection: "row", alignItems: "center", gap: 4 },
+  teamChipText: { fontSize: 12, fontWeight: "700", color: "#636366" },
+  livePill: {
+    fontSize: 10,
+    fontWeight: "900",
+    color: "#FFF",
+    backgroundColor: "#30D158",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    letterSpacing: 0.5,
+  },
+
+  // ── Visited sites
+  siteRow: { flexDirection: "row", alignItems: "center", paddingVertical: 8, gap: 8 },
+  siteDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#007AFF" },
+  siteRowName: { flex: 1, fontWeight: "800", color: "#000", fontSize: 14 },
+  siteRowVal: { fontWeight: "700", color: "#007AFF", fontSize: 13 },
+
+  // ── Compliance
+  complianceRow: { flexDirection: "row", alignItems: "flex-start", paddingVertical: 8, gap: 10 },
+  complianceDot: { width: 8, height: 8, borderRadius: 4, marginTop: 5 },
+  complianceDotActive: { backgroundColor: "#FF3B30" },
+  complianceDotOk: { backgroundColor: "#30D158" },
+  complianceType: { fontWeight: "800", color: "#000", fontSize: 13, textTransform: "capitalize" },
+  complianceMeta: { color: "#636366", fontSize: 12, fontWeight: "600", marginTop: 2 },
+  complianceActivePill: {
+    fontSize: 10,
+    fontWeight: "900",
+    color: "#FFF",
+    backgroundColor: "#FF3B30",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    letterSpacing: 0.5,
+  },
+
+  // ── Utils
   err: { color: "#C00", marginBottom: 8, fontSize: 14 },
   muted: { color: "#8E8E93", fontSize: 14, marginBottom: 8 },
-  searchModal: {
-    flex: 1,
-    paddingTop: 16,
-    paddingHorizontal: 16,
-    backgroundColor: "#F4F6FA",
-  },
+
+  // ── Search modal
+  searchModal: { flex: 1, paddingTop: 16, paddingHorizontal: 16, backgroundColor: "#F4F6FA" },
   searchBox: {
     flex: 1,
     flexDirection: "row",
@@ -682,13 +963,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.08)",
   },
-  searchInput: {
-    flex: 1,
-    fontSize: 16,
-    color: "#000",
-    fontWeight: "700",
-    paddingVertical: 0,
-  },
+  searchInput: { flex: 1, fontSize: 16, color: "#000", fontWeight: "700", paddingVertical: 0 },
   pickRow: {
     borderRadius: 14,
     backgroundColor: "#FFF",
@@ -698,10 +973,7 @@ const styles = StyleSheet.create({
     borderColor: "rgba(0,0,0,0.08)",
     marginBottom: 10,
   },
-  pickRowSelected: {
-    borderColor: "#007AFF",
-    backgroundColor: "rgba(0,122,255,0.08)",
-  },
+  pickRowSelected: { borderColor: "#007AFF", backgroundColor: "rgba(0,122,255,0.08)" },
   pickTitle: { fontWeight: "900", color: "#000", fontSize: 15 },
   pickSub: { marginTop: 4, color: "#666", fontSize: 12, fontWeight: "700" },
   quickBtn: {
@@ -728,42 +1000,58 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   quickBtnTextLight: { fontWeight: "900", color: "#FFF" },
-  statsRow: {
+
+  // ── Map selection card (Google Maps-style bottom overlay)
+  mapSelectionCard: {
+    position: "absolute",
+    bottom: 10,
+    left: 10,
+    right: 10,
+    borderRadius: 16,
+    backgroundColor: "rgba(255,255,255,0.97)",
+    shadowColor: "#000",
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 10,
+    overflow: "hidden",
+  },
+  mapSelectionCardInner: {
     flexDirection: "row",
-    gap: 8,
-    marginBottom: 12,
-  },
-  stat: {
-    flex: 1,
-    backgroundColor: "#F2F2F7",
-    borderRadius: 12,
-    padding: 10,
     alignItems: "center",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 12,
   },
-  statLabel: { fontSize: 11, color: "#666", marginTop: 4 },
-  statVal: { fontSize: 15, fontWeight: "800", color: "#000", marginTop: 2 },
-  playbackBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  playBtn: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: "#007AFF",
+  mapSelectionIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: "center",
     justifyContent: "center",
   },
-  sliderLabel: { fontSize: 12, color: "#636366", marginBottom: -4 },
-  speedRow: { flexDirection: "row", gap: 8, marginBottom: 16 },
-  speedChip: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: "#E5E5EA",
+  mapSelIconClient: { backgroundColor: "rgba(234,67,53,0.12)" },
+  mapSelIconGuard: { backgroundColor: "rgba(26,115,232,0.12)" },
+  mapSelectionName: { fontSize: 15, fontWeight: "900", color: "#202124" },
+  mapSelMetaRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 2 },
+  mapSelBattery: { flexDirection: "row", alignItems: "center", gap: 3 },
+  mapSelMeta: { fontSize: 12, color: "#5F6368", fontWeight: "600", marginTop: 2 },
+  mapSelActions: { flexDirection: "row", alignItems: "center", gap: 4 },
+  mapSelActionBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "rgba(26,115,232,0.1)",
+    alignItems: "center",
+    justifyContent: "center",
   },
-  speedChipOn: { backgroundColor: "#007AFF" },
-  speedChipText: { fontWeight: "700", color: "#000" },
-  speedChipTextOn: { color: "#FFF" },
+  mapSelCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(0,0,0,0.07)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: 4,
+  },
 });

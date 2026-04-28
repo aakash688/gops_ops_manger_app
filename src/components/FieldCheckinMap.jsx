@@ -1,7 +1,8 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { View, Text, StyleSheet, Platform, NativeModules } from "react-native";
 import MapView, { Marker, Circle, UrlTile } from "react-native-maps";
 import { CARTO_VOYAGER_URL_TEMPLATE } from "@/config/fieldMapStyle";
+import MapMarkerPin from "@/components/MapMarkerPin";
 
 /** Dims native Google basemap so OSM-style raster tiles read clearly (Android). iOS ignores this for Apple Maps. */
 const GOOGLE_BASE_MINIMAL_STYLE = [
@@ -44,7 +45,24 @@ export default function FieldCheckinMap({
   fullScreen = false,
 }) {
   const cameraRef = useRef(null);
+  const mapRef = useRef(null);
   const outerStyle = fullScreen ? { flex: 1, minHeight: 200 } : { height, borderRadius: 16 };
+  const centeredOnUserRef = useRef(false);
+
+  useEffect(() => {
+    if (Platform.OS === "web" || MLRN) return;
+    if (!centerOnUser || centeredOnUserRef.current || !userLoc || !mapRef.current) return;
+    centeredOnUserRef.current = true;
+    mapRef.current.animateToRegion(
+      {
+        latitude: userLoc.latitude,
+        longitude: userLoc.longitude,
+        latitudeDelta: fullScreen ? 0.025 : 0.035,
+        longitudeDelta: fullScreen ? 0.025 : 0.035,
+      },
+      350,
+    );
+  }, [centerOnUser, fullScreen, userLoc?.latitude, userLoc?.longitude]);
 
   if (Platform.OS === "web") {
     return (
@@ -58,6 +76,7 @@ export default function FieldCheckinMap({
     return (
       <View style={[{ overflow: "hidden" }, outerStyle]}>
         <MapView
+          ref={mapRef}
           style={StyleSheet.absoluteFill}
           initialRegion={{
             latitude: userLoc?.latitude ?? clients[0]?.latitude ?? 20.5937,
@@ -70,39 +89,43 @@ export default function FieldCheckinMap({
           {...(Platform.OS === "android" ? { customMapStyle: GOOGLE_BASE_MINIMAL_STYLE } : {})}
         >
           <UrlTile urlTemplate={CARTO_VOYAGER_URL_TEMPLATE} maximumZ={22} flipY={false} />
+          {userLoc ? (
+            <Marker
+              key={`user-${Math.round(userLoc.latitude * 100000)}-${Math.round(userLoc.longitude * 100000)}`}
+              coordinate={{ latitude: userLoc.latitude, longitude: userLoc.longitude }}
+              anchor={{ x: 0.5, y: 0.5 }}
+              tracksViewChanges
+            >
+              <View style={styles.userDotOuter}>
+                <View style={styles.userDotInner} />
+              </View>
+            </Marker>
+          ) : null}
           {geofenceCenter && geofenceRadiusM ? (
             <Circle
               center={{ latitude: geofenceCenter.latitude, longitude: geofenceCenter.longitude }}
               radius={geofenceRadiusM}
-              strokeColor="rgba(0,122,255,0.5)"
-              fillColor="rgba(0,122,255,0.08)"
+              strokeColor="rgba(26,115,232,0.55)"
+              fillColor="rgba(26,115,232,0.11)"
             />
           ) : null}
           {clients.map((c) => {
             const selected = c.id === selectedClientId;
             return (
               <Marker
-                key={c.id}
+                key={`${c.id}-${selected ? "selected" : "default"}`}
                 coordinate={{ latitude: c.latitude, longitude: c.longitude }}
                 title={c.clientName}
                 onPress={() => onSelectClient?.(c.id)}
                 anchor={{ x: 0.5, y: 1 }}
+                tracksViewChanges
               >
-                <View
-                  style={{
-                    minWidth: 44,
-                    height: 44,
-                    paddingHorizontal: 10,
-                    borderRadius: 22,
-                    backgroundColor: "rgba(255,255,255,0.95)",
-                    borderWidth: 2,
-                    borderColor: selected ? "#FF9500" : "#FF3B30",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <Text style={{ fontSize: 22 }}>{selected ? "📍" : "🏢"}</Text>
-                </View>
+                <MapMarkerPin
+                  type="client"
+                  color={selected ? "#F9AB00" : "#EA4335"}
+                  selected={selected}
+                  label={selected ? c.clientName : undefined}
+                />
               </Marker>
             );
           })}
@@ -139,6 +162,22 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   fallbackText: { color: "#666", textAlign: "center", fontSize: 14 },
+  userDotOuter: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "rgba(26,115,232,0.20)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  userDotInner: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: "#1A73E8",
+    borderWidth: 3,
+    borderColor: "#FFFFFF",
+  },
   osmAttrib: {
     position: "absolute",
     left: 6,

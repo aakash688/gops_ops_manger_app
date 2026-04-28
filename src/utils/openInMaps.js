@@ -23,25 +23,33 @@ export async function openMapsPin(lat, lng, label = "Location") {
 }
 
 /**
- * Turn-by-turn from current GPS to destination (both must be valid numbers).
+ * Turn-by-turn navigation to a destination.
+ * Origin is optional — when null/invalid the map app routes from the device's current GPS position.
+ * This opens instantly without waiting for a live GPS fix.
  */
 export async function openMapsDirections(fromLat, fromLng, toLat, toLng) {
-  const fa = Number(fromLat);
-  const fl = Number(fromLng);
   const ta = Number(toLat);
   const tl = Number(toLng);
-  if (![fa, fl, ta, tl].every(Number.isFinite)) {
-    Alert.alert("Directions", "Turn on location and pick a site on the map.");
+  if (!Number.isFinite(ta) || !Number.isFinite(tl)) {
+    Alert.alert("Directions", "This destination has no coordinates.");
     return;
   }
+
+  const fa = Number(fromLat);
+  const fl = Number(fromLng);
+  const hasOrigin = Number.isFinite(fa) && Number.isFinite(fl);
+
   try {
     if (Platform.OS === "ios") {
-      const url = `http://maps.apple.com/?saddr=${fa},${fl}&daddr=${ta},${tl}`;
+      // Apple Maps: omit saddr to let the app use device location when origin is unknown.
+      const url = hasOrigin
+        ? `http://maps.apple.com/?saddr=${fa},${fl}&daddr=${ta},${tl}&dirflg=d`
+        : `http://maps.apple.com/?daddr=${ta},${tl}&dirflg=d`;
       await Linking.openURL(url);
       return;
     }
 
-    // Android: prefer an intent that opens the Google Maps app directly.
+    // Android: google.navigation intent routes to destination from current device location (no origin needed).
     const nav = `google.navigation:q=${ta},${tl}&mode=d`;
     const canNav = await Linking.canOpenURL(nav);
     if (canNav) {
@@ -49,8 +57,10 @@ export async function openMapsDirections(fromLat, fromLng, toLat, toLng) {
       return;
     }
 
-    // Fallback: web URL (opens browser or maps app chooser).
-    const web = `https://www.google.com/maps/dir/?api=1&origin=${fa},${fl}&destination=${ta},${tl}`;
+    // Fallback: Google Maps web URL — include origin when available, otherwise destination-only.
+    const web = hasOrigin
+      ? `https://www.google.com/maps/dir/?api=1&origin=${fa},${fl}&destination=${ta},${tl}`
+      : `https://www.google.com/maps/dir/?api=1&destination=${ta},${tl}`;
     await Linking.openURL(web);
   } catch {
     Alert.alert("Maps", "Could not open directions.");

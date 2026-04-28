@@ -10,13 +10,13 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect";
-import { ArrowLeft, Camera, X } from "lucide-react-native";
+import { ArrowLeft, Camera, Image as ImageIcon, X } from "lucide-react-native";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import * as ImagePicker from "expo-image-picker";
 import KeyboardAvoidingAnimatedView from "@/components/KeyboardAvoidingAnimatedView";
 import ClientPickerModal from "@/components/ClientPickerModal";
-import { apiPostJson } from "@/utils/api";
+import { apiPostFormData } from "@/utils/api";
 
 export default function CreateTicket() {
   const insets = useSafeAreaInsets();
@@ -29,7 +29,7 @@ export default function CreateTicket() {
   const [loading, setLoading] = useState(false);
   const [pickingClient, setPickingClient] = useState(false);
 
-  const pickImage = async () => {
+  const pickFromGallery = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsMultipleSelection: true,
@@ -48,6 +48,30 @@ export default function CreateTicket() {
     }
   };
 
+  const pickFromCamera = async () => {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert("Camera", "Camera permission is required to take a photo.");
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.8,
+    });
+    if (!result.canceled) {
+      const a = result.assets?.[0];
+      if (!a?.uri) return;
+      setImages([
+        ...images,
+        {
+          uri: a.uri,
+          type: a.mimeType || "image/jpeg",
+          name: a.fileName || `ticket-${Date.now()}.jpg`,
+        },
+      ]);
+    }
+  };
+
   const removeImage = (index) => {
     setImages(images.filter((_, i) => i !== index));
   };
@@ -60,15 +84,22 @@ export default function CreateTicket() {
 
     setLoading(true);
     try {
-      // Backend supports an optional single image upload via multipart.
-      // For now we create ticket as JSON (works even without image); image support can be added with a dedicated endpoint.
-      await apiPostJson("/tickets", {
-        clientId: client.id,
-        title,
-        description,
-        societyName: client?.clientName ?? null,
-        priority,
-      });
+      const fd = new FormData();
+      fd.append("clientId", client.id);
+      fd.append("title", title);
+      fd.append("description", description);
+      fd.append("societyName", client?.clientName ?? "");
+      fd.append("priority", priority);
+      // Backend accepts at most 1 image for create (image/file/attachment).
+      if (images.length > 0) {
+        const img = images[0];
+        fd.append("image", {
+          uri: img.uri,
+          name: img.name || `ticket-${Date.now()}.jpg`,
+          type: img.type || "image/jpeg",
+        });
+      }
+      await apiPostFormData("/tickets", fd);
 
       Alert.alert("Success", "Ticket created successfully", [
         { text: "OK", onPress: () => router.back() },
@@ -298,62 +329,90 @@ export default function CreateTicket() {
           >
             Attachments
           </Text>
-          <TouchableOpacity onPress={pickImage}>
-            <GlassView
-              isInteractive={true}
-              style={[
-                {
-                  padding: 20,
-                  borderRadius: 12,
-                  alignItems: "center",
-                  overflow: "hidden",
-                },
-                isLiquidGlassAvailable()
-                  ? {}
-                  : { opacity: 0.95, backgroundColor: "#ffffff" },
-              ]}
-            >
-              <Camera size={32} color="#007AFF" />
-              <Text style={{ fontSize: 14, color: "#007AFF", marginTop: 8 }}>
-                Add Photos (optional)
-              </Text>
-            </GlassView>
-          </TouchableOpacity>
+          <View style={{ flexDirection: "row", gap: 10 }}>
+            <TouchableOpacity onPress={pickFromCamera} style={{ flex: 1 }}>
+              <GlassView
+                isInteractive={true}
+                style={[
+                  {
+                    padding: 18,
+                    borderRadius: 12,
+                    alignItems: "center",
+                    overflow: "hidden",
+                  },
+                  isLiquidGlassAvailable()
+                    ? {}
+                    : { opacity: 0.95, backgroundColor: "#ffffff" },
+                ]}
+              >
+                <Camera size={28} color="#007AFF" />
+                <Text style={{ fontSize: 13, color: "#007AFF", marginTop: 8 }}>
+                  Camera
+                </Text>
+              </GlassView>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={pickFromGallery} style={{ flex: 1 }}>
+              <GlassView
+                isInteractive={true}
+                style={[
+                  {
+                    padding: 18,
+                    borderRadius: 12,
+                    alignItems: "center",
+                    overflow: "hidden",
+                  },
+                  isLiquidGlassAvailable()
+                    ? {}
+                    : { opacity: 0.95, backgroundColor: "#ffffff" },
+                ]}
+              >
+                <ImageIcon size={28} color="#007AFF" />
+                <Text style={{ fontSize: 13, color: "#007AFF", marginTop: 8 }}>
+                  Gallery
+                </Text>
+              </GlassView>
+            </TouchableOpacity>
+          </View>
 
           {images.length > 0 && (
-            <View
-              style={{
-                flexDirection: "row",
-                flexWrap: "wrap",
-                gap: 8,
-                marginTop: 12,
-              }}
-            >
-              {images.map((img, index) => (
-                <View
-                  key={index}
-                  style={{ position: "relative", width: 100, height: 100 }}
-                >
-                  <Image
-                    source={{ uri: img.uri }}
-                    style={{ width: 100, height: 100, borderRadius: 8 }}
-                  />
-                  <TouchableOpacity
-                    onPress={() => removeImage(index)}
-                    style={{
-                      position: "absolute",
-                      top: -8,
-                      right: -8,
-                      backgroundColor: "#FF3B30",
-                      borderRadius: 12,
-                      padding: 4,
-                    }}
+            <>
+              <Text style={{ marginTop: 10, color: "#8E8E93", fontSize: 12 }}>
+                Only the first image will be uploaded for now.
+              </Text>
+              <View
+                style={{
+                  flexDirection: "row",
+                  flexWrap: "wrap",
+                  gap: 8,
+                  marginTop: 12,
+                }}
+              >
+                {images.map((img, index) => (
+                  <View
+                    key={index}
+                    style={{ position: "relative", width: 100, height: 100 }}
                   >
-                    <X size={16} color="#FFF" />
-                  </TouchableOpacity>
-                </View>
-              ))}
-            </View>
+                    <Image
+                      source={{ uri: img.uri }}
+                      style={{ width: 100, height: 100, borderRadius: 8 }}
+                    />
+                    <TouchableOpacity
+                      onPress={() => removeImage(index)}
+                      style={{
+                        position: "absolute",
+                        top: -8,
+                        right: -8,
+                        backgroundColor: "#FF3B30",
+                        borderRadius: 12,
+                        padding: 4,
+                      }}
+                    >
+                      <X size={16} color="#FFF" />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            </>
           )}
         </View>
 

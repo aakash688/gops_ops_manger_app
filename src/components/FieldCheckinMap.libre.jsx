@@ -1,5 +1,5 @@
-import { useMemo, useEffect } from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { useMemo, useEffect, useRef } from "react";
+import { View, StyleSheet } from "react-native";
 import {
   MapView as MLMapView,
   Camera,
@@ -9,6 +9,7 @@ import {
   FillLayer,
 } from "@maplibre/maplibre-react-native";
 import { getFieldMapStyle } from "@/config/fieldMapStyle";
+import MapMarkerPin from "@/components/MapMarkerPin";
 
 function geofencePolygonRing(lat, lng, radiusM, steps = 72) {
   const R = 6371000;
@@ -45,32 +46,13 @@ export default function FieldCheckinMapLibre({
   centerOnUser = true,
 }) {
   const mapStyle = useMemo(() => getFieldMapStyle(), []);
+  const centeredOnUserRef = useRef(false);
 
   const centerCoord = useMemo(() => {
     if (userLoc) return [userLoc.longitude, userLoc.latitude];
     if (clients[0]) return [clients[0].longitude, clients[0].latitude];
     return [78.9629, 20.5937];
   }, [userLoc, clients]);
-
-  const clientFeatures = useMemo(
-    () => ({
-      type: "FeatureCollection",
-      features: clients.map((c) => ({
-        type: "Feature",
-        id: c.id,
-        properties: {
-          id: c.id,
-          name: c.clientName,
-          sel: c.id === selectedClientId ? 1 : 0,
-        },
-        geometry: {
-          type: "Point",
-          coordinates: [c.longitude, c.latitude],
-        },
-      })),
-    }),
-    [clients, selectedClientId],
-  );
 
   const geofenceFill = useMemo(() => {
     if (!geofenceCenter || !geofenceRadiusM) return null;
@@ -86,8 +68,10 @@ export default function FieldCheckinMapLibre({
   }, [geofenceCenter, geofenceRadiusM]);
 
   useEffect(() => {
+    if (centeredOnUserRef.current) return;
     if (!centerOnUser) return;
     if (!cameraRef.current || !userLoc) return;
+    centeredOnUserRef.current = true;
     cameraRef.current.setCamera({
       centerCoordinate: [userLoc.longitude, userLoc.latitude],
       zoomLevel: fullScreen ? 15 : 14,
@@ -120,12 +104,23 @@ export default function FieldCheckinMapLibre({
         {/* Avoid the moving arrow/compass look — keep it as a simple blue dot. */}
         <UserLocation visible showsUserHeadingIndicator={false} androidRenderMode="normal" />
 
+        {userLoc ? (
+          <PointAnnotation
+            id={`user-location-${Math.round(userLoc.latitude * 100000)}-${Math.round(userLoc.longitude * 100000)}`}
+            coordinate={[userLoc.longitude, userLoc.latitude]}
+          >
+            <View style={styles.userDotOuter}>
+              <View style={styles.userDotInner} />
+            </View>
+          </PointAnnotation>
+        ) : null}
+
         {geofenceFill ? (
           <ShapeSource id="geofence" shape={geofenceFill}>
             <FillLayer
               id="geofence-fill"
               style={{
-                fillColor: "rgba(0, 122, 255, 0.14)",
+                fillColor: "rgba(26, 115, 232, 0.14)",
               }}
             />
           </ShapeSource>
@@ -135,16 +130,17 @@ export default function FieldCheckinMapLibre({
           const selected = c.id === selectedClientId;
           return (
             <PointAnnotation
-              key={c.id}
-              id={String(c.id)}
+              key={`${c.id}-${selected ? "selected" : "default"}`}
+              id={`${c.id}-${selected ? "selected" : "default"}`}
               coordinate={[c.longitude, c.latitude]}
               onSelected={() => onSelectClient?.(c.id)}
             >
-              <View style={[styles.pinWrap, selected && styles.pinWrapSelected]}>
-                <View style={[styles.emojiBubble, selected && styles.emojiBubbleSelected]}>
-                  <Text style={styles.emoji}>{selected ? "📍" : "🏢"}</Text>
-                </View>
-              </View>
+              <MapMarkerPin
+                type="client"
+                color={selected ? "#F9AB00" : "#EA4335"}
+                selected={selected}
+                label={selected ? c.clientName : undefined}
+              />
             </PointAnnotation>
           );
         })}
@@ -154,31 +150,21 @@ export default function FieldCheckinMapLibre({
 }
 
 const styles = StyleSheet.create({
-  pinWrap: {
-    alignItems: "center",
-  },
-  pinWrapSelected: {
-    transform: [{ scale: 1.12 }],
-  },
-  emojiBubble: {
-    minWidth: 44,
-    height: 44,
-    paddingHorizontal: 10,
-    borderRadius: 22,
-    backgroundColor: "rgba(255,255,255,0.95)",
-    borderWidth: 2,
-    borderColor: "#FF3B30",
+  userDotOuter: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "rgba(26,115,232,0.20)",
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: "#000",
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
   },
-  emojiBubbleSelected: {
-    borderColor: "#FF9500",
-  },
-  emoji: {
-    fontSize: 22,
+  userDotInner: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: "#1A73E8",
+    borderWidth: 3,
+    borderColor: "#FFFFFF",
   },
 });
+

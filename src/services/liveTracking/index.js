@@ -159,7 +159,10 @@ export async function startLiveTracking(opts = {}) {
     await Location.stopLocationUpdatesAsync(LIVE_TRACKING_TASK);
   }
 
-  const intervalMs = Math.max(30_000, Math.min(600_000, pingIntervalSec * 1000));
+  // Field sessions (REMOTE = GPS punch-in, QR = QR punch-in) use a 2-minute minimum interval.
+  const fieldLoginMethods = new Set(["REMOTE", "QR"]);
+  const minIntervalMs = fieldLoginMethods.has(loginMethod) ? 120_000 : 30_000;
+  const intervalMs = Math.max(minIntervalMs, Math.min(600_000, pingIntervalSec * 1000));
 
   await Location.startLocationUpdatesAsync(LIVE_TRACKING_TASK, {
     accuracy: Location.Accuracy.Balanced,
@@ -192,8 +195,10 @@ export async function stopLiveTracking() {
 
   const sessionId = await getSessionId();
   if (sessionId) {
+    // Flush pings first so offline queue reaches the server before the session closes.
+    const flushResult = await flushPingQueue().catch(() => ({ flushed: 0, error: true }));
     try {
-      await flushPingQueue();
+      await flushComplianceQueue();
     } catch {
       /* ignore */
     }
@@ -202,9 +207,15 @@ export async function stopLiveTracking() {
     } catch {
       /* ignore — session may already be closed server-side */
     }
+    await clearSessionMeta();
+    // Only wipe the queue if we confirmed a successful flush; otherwise keep for retry on next start.
+    if (!flushResult?.error) {
+      await clearQueue();
+    }
+  } else {
+    await clearSessionMeta();
+    await clearQueue();
   }
-  await clearSessionMeta();
-  await clearQueue();
 }
 
 /** If we have a persisted session id (e.g. after app restart), restart native updates. */
