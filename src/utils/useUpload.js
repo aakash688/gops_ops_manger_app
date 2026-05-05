@@ -1,6 +1,9 @@
 import * as React from 'react';
 import { UploadClient } from '@uploadcare/upload-client'
-const client = new UploadClient({ publicKey: process.env.EXPO_PUBLIC_UPLOADCARE_PUBLIC_KEY });
+const uploadcarePublicKey = process.env.EXPO_PUBLIC_UPLOADCARE_PUBLIC_KEY;
+const client = uploadcarePublicKey
+  ? new UploadClient({ publicKey: uploadcarePublicKey })
+  : null;
 
 function useUpload() {
   const [loading, setLoading] = React.useState(false);
@@ -26,6 +29,10 @@ function useUpload() {
             method: "POST",
           });
           const { secureSignature, secureExpire } = await presignRes.json();
+
+          if (!client) {
+            throw new Error("Uploadcare public key is not configured.");
+          }
 
           const result = await client.uploadFile(asset, {
             fileName: asset.name ?? asset.uri.split("/").pop(),

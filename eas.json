@@ -16,10 +16,9 @@
         "EXPO_PUBLIC_BASE_CREATE_USER_CONTENT_URL": "https://raw.createusercontent.com",
         "EXPO_PUBLIC_BASE_URL": "https://f413cebd-b255-492e-bb28-20c4bd976f38.created.app",
         "EXPO_PUBLIC_CREATE_ENV": "PRODUCTION",
-        "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY": "",
         "EXPO_PUBLIC_HOST": "f413cebd-b255-492e-bb28-20c4bd976f38.created.app",
         "EXPO_PUBLIC_PROJECT_GROUP_ID": "f413cebd-b255-492e-bb28-20c4bd976f38",
-        "EXPO_PUBLIC_UPLOADCARE_PUBLIC_KEY": "",
+        "EXPO_PUBLIC_MAP_ENGINE": "maplibre",
         "EXPO_PUBLIC_MAP_STYLE_MODE": "carto-raster"
       }
     },
@@ -34,10 +33,9 @@
         "EXPO_PUBLIC_BASE_CREATE_USER_CONTENT_URL": "https://raw.createusercontent.com",
         "EXPO_PUBLIC_BASE_URL": "https://f413cebd-b255-492e-bb28-20c4bd976f38.created.app",
         "EXPO_PUBLIC_CREATE_ENV": "PRODUCTION",
-        "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY": "",
         "EXPO_PUBLIC_HOST": "f413cebd-b255-492e-bb28-20c4bd976f38.created.app",
         "EXPO_PUBLIC_PROJECT_GROUP_ID": "f413cebd-b255-492e-bb28-20c4bd976f38",
-        "EXPO_PUBLIC_UPLOADCARE_PUBLIC_KEY": "",
+        "EXPO_PUBLIC_MAP_ENGINE": "maplibre",
         "EXPO_PUBLIC_MAP_STYLE_MODE": "carto-raster"
       }
     },
@@ -52,10 +50,9 @@
         "EXPO_PUBLIC_BASE_CREATE_USER_CONTENT_URL": "https://raw.createusercontent.com",
         "EXPO_PUBLIC_BASE_URL": "https://f413cebd-b255-492e-bb28-20c4bd976f38.created.app",
         "EXPO_PUBLIC_CREATE_ENV": "PRODUCTION",
-        "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY": "",
         "EXPO_PUBLIC_HOST": "f413cebd-b255-492e-bb28-20c4bd976f38.created.app",
         "EXPO_PUBLIC_PROJECT_GROUP_ID": "f413cebd-b255-492e-bb28-20c4bd976f38",
-        "EXPO_PUBLIC_UPLOADCARE_PUBLIC_KEY": "",
+        "EXPO_PUBLIC_MAP_ENGINE": "maplibre",
         "EXPO_PUBLIC_MAP_STYLE_MODE": "carto-raster"
       }
     }

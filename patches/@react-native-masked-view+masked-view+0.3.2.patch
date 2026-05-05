@@ -1,0 +1,48 @@
+diff --git a/node_modules/@react-native-masked-view/masked-view/android/build.gradle b/node_modules/@react-native-masked-view/masked-view/android/build.gradle
+index ed87f73..682258a 100644
+--- a/node_modules/@react-native-masked-view/masked-view/android/build.gradle
++++ b/node_modules/@react-native-masked-view/masked-view/android/build.gradle
+@@ -17,33 +17,9 @@ buildscript {
+ 
+ apply plugin: 'com.android.library'
+ 
+-def agpVersion = com.android.Version.ANDROID_GRADLE_PLUGIN_VERSION.tokenize('.')[0].toInteger()
+-def shouldUseNameSpace = agpVersion >= 7
+-def PACKAGE_PROP = "package=\"org.reactnative.maskedview\""
+-def manifestOutFile = file("${projectDir}/src/main/AndroidManifest.xml")
+-def manifestContent = manifestOutFile.getText()
+-if(shouldUseNameSpace){
+-      manifestContent = manifestContent.replaceAll(
+-        PACKAGE_PROP,
+-        ''
+-    )  
+-} else {
+-    if(!manifestContent.contains("$PACKAGE_PROP")){
+-        manifestContent = manifestContent.replace(
+-            '<manifest',
+-            "<manifest $PACKAGE_PROP "
+-        )
+-    }
+-}
+-manifestContent.replaceAll("  ", " ")
+-manifestOutFile.write(manifestContent)
+-
+ android {
+   compileSdkVersion safeExtGet('compileSdkVersion', 28)
+-  
+-  if(shouldUseNameSpace){
+-    namespace = "org.reactnative.maskedview"
+-  }
++  namespace "org.reactnative.maskedview"
+ 
+   defaultConfig {
+     minSdkVersion safeExtGet('minSdkVersion', 16)
+diff --git a/node_modules/@react-native-masked-view/masked-view/android/src/main/AndroidManifest.xml b/node_modules/@react-native-masked-view/masked-view/android/src/main/AndroidManifest.xml
+index 5d1b95e..b2d3ea1 100644
+--- a/node_modules/@react-native-masked-view/masked-view/android/src/main/AndroidManifest.xml
++++ b/node_modules/@react-native-masked-view/masked-view/android/src/main/AndroidManifest.xml
+@@ -1,2 +1,2 @@
+-<manifest package="org.reactnative.maskedview" xmlns:android="http://schemas.android.com/apk/res/android">
+-</manifest>
++<?xml version="1.0" encoding="utf-8"?>
++<manifest xmlns:android="http://schemas.android.com/apk/res/android" />

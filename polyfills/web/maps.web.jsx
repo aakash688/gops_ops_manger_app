@@ -1,50 +1,26 @@
-import WebMapView, * as WebMaps from '@teovilla/react-native-web-maps';
 import React from 'react';
+import { View } from 'react-native';
 
-export const PROVIDER_GOOGLE = 'google';
 export const PROVIDER_DEFAULT = undefined;
 
-const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
-
 const MapView = React.forwardRef((props, ref) => {
-  return (
-    <WebMapView
-      ref={ref}
-      provider={PROVIDER_GOOGLE} // only google provider works on web
-      googleMapsApiKey={GOOGLE_MAPS_API_KEY}
-      {...props}
-      options={{
-        disableDefaultUI: true,
-        zoomControl: false,
-        streetViewControl: false,
-        mapTypeControl: false,
-        fullscreenControl: false,
-        rotateControl: false,
-        scaleControl: false,
-        keyboardShortcuts: false,
-        ...props.options,
-      }}
-    />
-  );
+  const { style, children } = props;
+  return <View ref={ref} style={style}>{children}</View>;
 });
 
-Object.assign(MapView, {
-  ...WebMaps,
-  PROVIDER_GOOGLE,
-  PROVIDER_DEFAULT,
-});
+const MapChild = ({ children }) => children ?? null;
 
-export const {
-  Marker,
-  Callout,
-  Polyline,
-  Polygon,
-  Circle,
-  Overlay,
-  Heatmap,
-  UrlTile,
-  WMSTile,
-  LocalTile,
-} = WebMaps;
+Object.assign(MapView, { PROVIDER_DEFAULT });
+
+export const Marker = MapChild;
+export const Callout = MapChild;
+export const Polyline = MapChild;
+export const Polygon = MapChild;
+export const Circle = MapChild;
+export const Overlay = MapChild;
+export const Heatmap = MapChild;
+export const UrlTile = MapChild;
+export const WMSTile = MapChild;
+export const LocalTile = MapChild;
 
 export default MapView;

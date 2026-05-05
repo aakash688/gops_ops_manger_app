@@ -15,20 +15,20 @@ import { reportComplianceEvent } from "@/services/liveTracking";
 import { ensureLocalSirenUri } from "@/services/liveTracking/sirenCache";
 
 /**
- * Full-screen alert + looping audio/vibration when tracking cannot run (spec: siren until resolved).
+ * Full-screen alert + looping audio/vibration when location permission, system location,
+ * or device radios (no Wi‑Fi and no cellular link) block duty tracking.
+ * "No internet" while Wi‑Fi/cellular is still connected does not trigger this (isConnected can be true without DNS).
  * Only enforced while a live tracking session is active (field check-in open).
  */
 export default function LiveTrackingComplianceOverlay({ trackingActive }) {
   const [breach, setBreach] = useState(null);
   const soundRef = useRef(null);
   const vibTimerRef = useRef(null);
-  const candidateRef = useRef({ type: null, since: 0 });
   const reportedRef = useRef({ perm: false, gps: false, network: false });
 
   useEffect(() => {
     if (Platform.OS === "web" || !trackingActive) {
       setBreach(null);
-      candidateRef.current = { type: null, since: 0 };
       return undefined;
     }
 
@@ -38,8 +38,6 @@ export default function LiveTrackingComplianceOverlay({ trackingActive }) {
       const fg = await Location.getForegroundPermissionsAsync();
       if (fg.status !== "granted") {
         if (cancelled) return;
-        // Permission revoked → no grace (must fix immediately)
-        candidateRef.current = { type: "perm", since: Date.now() };
         setBreach("perm");
         if (!reportedRef.current.perm) {
           reportedRef.current.perm = true;
@@ -50,43 +48,24 @@ export default function LiveTrackingComplianceOverlay({ trackingActive }) {
       const servicesOk = await Location.hasServicesEnabledAsync();
       if (!servicesOk) {
         if (cancelled) return;
-        const now = Date.now();
-        const graceMs = 10_000; // GPS off: short 10-second grace before siren
-        if (candidateRef.current.type !== "gps") {
-          candidateRef.current = { type: "gps", since: now };
-          setBreach(null);
-          return;
-        }
-        if (now - candidateRef.current.since >= graceMs) {
-          setBreach("gps");
-          if (!reportedRef.current.gps) {
-            reportedRef.current.gps = true;
-            reportComplianceEvent({ type: "GPS_OFF", status: "START", severity: "CRITICAL" }).catch(() => {});
-          }
+        setBreach("gps");
+        if (!reportedRef.current.gps) {
+          reportedRef.current.gps = true;
+          reportComplianceEvent({ type: "GPS_OFF", status: "START", severity: "CRITICAL" }).catch(() => {});
         }
         return;
       }
       const net = await NetInfo.fetch();
       if (net.isConnected === false) {
         if (cancelled) return;
-        const now = Date.now();
-        const graceMs = 45_000; // Network offline: 45-second grace (short, but allows brief drops)
-        if (candidateRef.current.type !== "network") {
-          candidateRef.current = { type: "network", since: now };
-          setBreach(null);
-          return;
-        }
-        if (now - candidateRef.current.since >= graceMs) {
-          setBreach("network");
-          if (!reportedRef.current.network) {
-            reportedRef.current.network = true;
-            reportComplianceEvent({ type: "NETWORK_OFFLINE", status: "START", severity: "WARN" }).catch(() => {});
-          }
+        setBreach("network");
+        if (!reportedRef.current.network) {
+          reportedRef.current.network = true;
+          reportComplianceEvent({ type: "NETWORK_OFFLINE", status: "START", severity: "WARN" }).catch(() => {});
         }
         return;
       }
       if (!cancelled) {
-        candidateRef.current = { type: null, since: 0 };
         setBreach(null);
         if (reportedRef.current.perm) {
           reportedRef.current.perm = false;
@@ -108,7 +87,7 @@ export default function LiveTrackingComplianceOverlay({ trackingActive }) {
       if (s === "active") evaluate();
     });
     const netUnsub = NetInfo.addEventListener(() => evaluate());
-    const poll = setInterval(evaluate, 4000);
+    const poll = setInterval(evaluate, 1000);
 
     return () => {
       cancelled = true;
@@ -182,7 +161,7 @@ export default function LiveTrackingComplianceOverlay({ trackingActive }) {
       ? "Location permission was revoked. Open system settings and allow location for this app (including “Always” / background if prompted)."
       : breach === "gps"
         ? "Location services are turned off. Enable GPS/location in device settings."
-        : "No network connection. Turn on Wi‑Fi or mobile data so tracking can sync.";
+        : "Wi‑Fi and mobile data are both off (no network link). Turn on Wi‑Fi or mobile data so tracking can sync.";
 
   return (
     <Modal
@@ -221,7 +200,7 @@ export default function LiveTrackingComplianceOverlay({ trackingActive }) {
             fontWeight: "600",
           }}
         >
-          Please enable GPS/Data.
+          Please enable GPS / location or turn on Wi‑Fi or mobile data.
         </Text>
         <Text
           style={{

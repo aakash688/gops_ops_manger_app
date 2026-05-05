@@ -46,7 +46,9 @@ export const StatusBar = React.forwardRef<any, StatusBarProps>(
       postColorToParent(styleToBarColor(style, colorScheme));
     }, [style, colorScheme]);
 
-    return <ExpoStatusBar ref={ref} style={style} {...props} />;
+    // expo-status-bar does not support ref (native StatusBar does); omit ref on web shim.
+    void ref;
+    return <ExpoStatusBar style={style} {...props} />;
   }
 );
 

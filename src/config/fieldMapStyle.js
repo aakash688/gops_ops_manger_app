@@ -12,10 +12,7 @@
 
 const OPENFREEMAP_LIBERTY = "https://tiles.openfreemap.org/styles/liberty";
 
-/**
- * Raster template for `react-native-maps` UrlTile (Expo Go fallback).
- * Same OSM-derived layer as `buildCartoVoyagerRasterStyle` — one subdomain is enough for UrlTile.
- */
+/** Raster template for lightweight OSM-compatible map fallbacks. */
 export const CARTO_VOYAGER_URL_TEMPLATE =
   "https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png";
 

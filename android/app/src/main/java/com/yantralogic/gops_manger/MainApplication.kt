@@ -1,4 +1,4 @@
-package xyz.create.CreateExpoEnvironment
+package com.yantralogic.gops_manger
 
 import android.app.Application
 import android.content.res.Configuration

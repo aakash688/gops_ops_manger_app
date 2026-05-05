@@ -31,7 +31,7 @@ import {
   Satellite,
   Building2,
   UserRound,
-  ExternalLink,
+  Crosshair,
 } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
@@ -45,10 +45,15 @@ import { apiGetJson } from "@/utils/api";
 import { useAuthStore } from "@/utils/auth/store";
 import { openMapsDirections, openMapsPin } from "@/utils/openInMaps";
 import {
+  normalizeRecordCoordinates,
+  normalizeRecordCoordinatesList,
+  metersBetween,
+} from "@/utils/coordinates";
+import {
   getSessionId,
   getPingIntervalSec,
 } from "@/services/liveTracking/storage";
-import { isLiveTrackingSessionActive } from "@/services/liveTracking";
+import { getLiveTrackingHealth, isLiveTrackingSessionActive, reportComplianceEvent } from "@/services/liveTracking";
 
 function formatAgo(iso) {
   if (!iso) return "—";
@@ -73,6 +78,189 @@ function formatDuration(sec) {
   const m = Math.floor((sec % 3600) / 60);
   if (h > 0) return `${h}h ${m}m`;
   return `${m}m`;
+}
+
+function formatClock(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
+/** YYYY-MM-DD in the device's local calendar (not UTC). */
+function localCalendarDateISO(d) {
+  const tzOffsetMs = d.getTimezoneOffset() * 60_000;
+  return new Date(d.getTime() - tzOffsetMs).toISOString().slice(0, 10);
+}
+
+function todayLocalISODate() {
+  return localCalendarDateISO(new Date());
+}
+
+function localDateISOPlusDays(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return localCalendarDateISO(d);
+}
+
+function pointLocalDateISO(p) {
+  const raw = p.trackedAt ?? p.timestamp ?? p.createdAt;
+  if (!raw) return null;
+  const t = new Date(raw).getTime();
+  if (!Number.isFinite(t)) return null;
+  return localCalendarDateISO(new Date(t));
+}
+
+function filterRouteDataToLocalToday(data, todayIso) {
+  if (!data || !Array.isArray(data.points)) return data;
+  const filtered = data.points.filter((p) => pointLocalDateISO(p) === todayIso);
+  return { ...data, points: filtered };
+}
+
+const OFFLINE_FRIENDLY = "Offline — will load when internet returns";
+
+function isNetworkErrorMsg(msg) {
+  if (msg == null) return false;
+  const s = String(msg).toLowerCase();
+  return (
+    s.includes("unknownhostexception")
+    || s.includes("unable to resolve host")
+    || s.includes("network request failed")
+    || s.includes("failed to fetch")
+    || s.includes("econnrefused")
+    || s.includes("etimedout")
+    || s.includes("enotfound")
+    || s.includes("network error")
+    || s.includes("sockettimeout")
+  );
+}
+
+function friendlyLoadError(e) {
+  const msg = e instanceof Error ? e.message : String(e ?? "");
+  return isNetworkErrorMsg(msg) ? OFFLINE_FRIENDLY : msg || "Something went wrong";
+}
+
+const STALE_COMPLIANCE_MS = 10 * 60 * 1000;
+
+/** Close orphaned START rows from older app versions once radios/GPS/permission are healthy again. */
+async function resolveStaleOpenComplianceEvents(events) {
+  if (!Array.isArray(events) || events.length === 0) return false;
+  const net = await NetInfo.fetch();
+  if (net.isConnected !== true) return false;
+  const fg = await Location.getForegroundPermissionsAsync();
+  const servicesOk = await Location.hasServicesEnabledAsync();
+  const now = Date.now();
+  const endedAt = new Date().toISOString();
+
+  const stale = (e) => {
+    if (e.endedAt) return false;
+    const started = e.startedAt ? new Date(e.startedAt).getTime() : NaN;
+    return Number.isFinite(started) && now - started >= STALE_COMPLIANCE_MS;
+  };
+
+  let posted = false;
+  if (events.some((e) => stale(e) && String(e.type) === "NETWORK_OFFLINE")) {
+    await reportComplianceEvent({
+      type: "NETWORK_OFFLINE",
+      status: "END",
+      endedAt,
+    }).catch(() => {});
+    posted = true;
+  }
+  if (servicesOk && events.some((e) => stale(e) && String(e.type) === "GPS_OFF")) {
+    await reportComplianceEvent({
+      type: "GPS_OFF",
+      status: "END",
+      endedAt,
+    }).catch(() => {});
+    posted = true;
+  }
+  if (fg.status === "granted" && events.some((e) => stale(e) && String(e.type) === "PERMISSION_REVOKED")) {
+    await reportComplianceEvent({
+      type: "PERMISSION_REVOKED",
+      status: "END",
+      endedAt,
+    }).catch(() => {});
+    posted = true;
+  }
+  return posted;
+}
+
+const SITE_VISIT_RADIUS_M = 500;
+
+/** Contiguous stretches at one client from route pings (nearest site within radius). */
+function buildSiteVisitSegmentsFromRoute(routePoints, clientsList, radiusM) {
+  if (!Array.isArray(routePoints) || routePoints.length === 0) return [];
+  if (!Array.isArray(clientsList) || clientsList.length === 0) return [];
+
+  const normalized = routePoints
+    .map((p) => {
+      const c = normalizeRecordCoordinates(p);
+      if (!c) return null;
+      const raw = p.trackedAt ?? p.timestamp ?? p.createdAt;
+      const ts = raw ? new Date(raw).getTime() : NaN;
+      if (!Number.isFinite(ts)) return null;
+      return {
+        latitude: c.latitude,
+        longitude: c.longitude,
+        ts,
+        iso: new Date(ts).toISOString(),
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.ts - b.ts);
+
+  if (!normalized.length) return [];
+
+  const nearestClient = (lat, lng) => {
+    let best = null;
+    let bestD = Infinity;
+    for (const cl of clientsList) {
+      if (!Number.isFinite(cl.latitude) || !Number.isFinite(cl.longitude)) continue;
+      const d = metersBetween(
+        { latitude: lat, longitude: lng },
+        { latitude: cl.latitude, longitude: cl.longitude },
+      );
+      if (d != null && d <= radiusM && d < bestD) {
+        bestD = d;
+        best = { id: String(cl.id), clientName: cl.clientName || "Site" };
+      }
+    }
+    return best;
+  };
+
+  const segments = [];
+  let i = 0;
+  while (i < normalized.length) {
+    const at = nearestClient(normalized[i].latitude, normalized[i].longitude);
+    if (!at) {
+      i += 1;
+      continue;
+    }
+    const { id, clientName } = at;
+    const start = normalized[i];
+    let j = i + 1;
+    while (j < normalized.length) {
+      const atJ = nearestClient(normalized[j].latitude, normalized[j].longitude);
+      if (!atJ || atJ.id !== id) break;
+      j += 1;
+    }
+    const end = normalized[j - 1];
+    const lastPt = normalized[normalized.length - 1];
+    const lastNearest = nearestClient(lastPt.latitude, lastPt.longitude);
+    const ongoing = lastNearest?.id === id && j === normalized.length;
+
+    segments.push({
+      clientId: id,
+      clientName,
+      arrivedAt: start.iso,
+      leftAt: ongoing ? null : end.iso,
+      durationSec: Math.max(0, Math.round((end.ts - start.ts) / 1000)),
+      ongoing,
+    });
+    i = j;
+  }
+  return segments;
 }
 
 function BatteryIcon({ level }) {
@@ -115,6 +303,12 @@ export default function LiveTrackingScreen() {
     network: "UNKNOWN",
     lastPingAt: null,
   });
+  const [nativeHealth, setNativeHealth] = useState(null);
+  /** Current device location for map centering (same behavior as remote check-in). */
+  const [mapUserLoc, setMapUserLoc] = useState(null);
+  /** Bumped on each screen focus so the map can re-run one-shot "center on me". */
+  const [mapCenterEpoch, setMapCenterEpoch] = useState(0);
+  const [locatingMe, setLocatingMe] = useState(false);
 
   const glassFallback = isLiquidGlassAvailable() ? {} : { backgroundColor: "#fff" };
 
@@ -137,6 +331,9 @@ export default function LiveTrackingScreen() {
         else network = "Online";
       }
       setMySession((prev) => ({ ...prev, active, intervalSec, battery, network }));
+      getLiveTrackingHealth()
+        .then(setNativeHealth)
+        .catch(() => setNativeHealth(null));
     } catch {
       /* ignore */
     }
@@ -147,10 +344,10 @@ export default function LiveTrackingScreen() {
     setTeamLoading(true);
     try {
       const { data } = await apiGetJson("/apps/live-tracking/team/latest");
-      setTeam(Array.isArray(data) ? data : []);
+      setTeam(normalizeRecordCoordinatesList(data));
     } catch (e) {
       setTeam([]);
-      setTeamError(e instanceof Error ? e.message : "Could not load team");
+      setTeamError(friendlyLoadError(e));
     } finally {
       setTeamLoading(false);
     }
@@ -160,10 +357,10 @@ export default function LiveTrackingScreen() {
     setClientsError(null);
     try {
       const { data } = await apiGetJson("/apps/field-checkin/clients");
-      setClients(Array.isArray(data) ? data : []);
+      setClients(normalizeRecordCoordinatesList(data));
     } catch (e) {
       setClients([]);
-      setClientsError(e instanceof Error ? e.message : "Could not load clients");
+      setClientsError(friendlyLoadError(e));
     }
   }, []);
 
@@ -172,25 +369,27 @@ export default function LiveTrackingScreen() {
       setRoute(null);
       return;
     }
-    const day = new Date().toISOString().slice(0, 10);
+    const todayIso = todayLocalISODate();
+    const dateFrom = localDateISOPlusDays(-1);
+    const dateTo = localDateISOPlusDays(1);
     setRouteError(null);
     setRouteLoading(true);
     try {
       const { data } = await apiGetJson(
-        `/apps/live-tracking/route?employeeId=${encodeURIComponent(employeeId)}&dateFrom=${day}&dateTo=${day}&limit=4000`,
+        `/apps/live-tracking/route?employeeId=${encodeURIComponent(employeeId)}&dateFrom=${dateFrom}&dateTo=${dateTo}&limit=4000`,
       );
-      setRoute(data ?? null);
+      const filtered = filterRouteDataToLocalToday(data ?? null, todayIso);
+      setRoute(filtered ?? null);
       setPlaybackIndex(0);
       setPlaying(false);
-      // Update last ping time from route points
-      const pts = data?.points;
+      const pts = filtered?.points;
       if (Array.isArray(pts) && pts.length > 0) {
         const last = pts[pts.length - 1];
         setMySession((prev) => ({ ...prev, lastPingAt: last.trackedAt ?? last.timestamp ?? null }));
       }
     } catch (e) {
       setRoute(null);
-      setRouteError(e instanceof Error ? e.message : "Could not load route");
+      setRouteError(friendlyLoadError(e));
     } finally {
       setRouteLoading(false);
     }
@@ -201,17 +400,18 @@ export default function LiveTrackingScreen() {
       setClientHalts(null);
       return;
     }
-    const day = new Date().toISOString().slice(0, 10);
+    const dateFrom = localDateISOPlusDays(-1);
+    const dateTo = localDateISOPlusDays(1);
     setClientHaltsError(null);
     setClientHaltsLoading(true);
     try {
       const { data } = await apiGetJson(
-        `/apps/live-tracking/analytics/client-halts?employeeId=${encodeURIComponent(employeeId)}&dateFrom=${day}&dateTo=${day}&radiusMeters=500&limitPoints=4000`,
+        `/apps/live-tracking/analytics/client-halts?employeeId=${encodeURIComponent(employeeId)}&dateFrom=${dateFrom}&dateTo=${dateTo}&radiusMeters=500&limitPoints=4000`,
       );
       setClientHalts(data ?? null);
     } catch (e) {
       setClientHalts(null);
-      setClientHaltsError(e instanceof Error ? e.message : "Could not load client halts");
+      setClientHaltsError(friendlyLoadError(e));
     } finally {
       setClientHaltsLoading(false);
     }
@@ -222,17 +422,26 @@ export default function LiveTrackingScreen() {
       setComplianceTl([]);
       return;
     }
-    const day = new Date().toISOString().slice(0, 10);
+    const dateFrom = localDateISOPlusDays(-1);
+    const dateTo = localDateISOPlusDays(1);
     setComplianceError(null);
     setComplianceLoading(true);
     try {
       const { data } = await apiGetJson(
-        `/apps/live-tracking/compliance/timeline?employeeId=${encodeURIComponent(employeeId)}&dateFrom=${day}&dateTo=${day}&limit=200`,
+        `/apps/live-tracking/compliance/timeline?employeeId=${encodeURIComponent(employeeId)}&dateFrom=${dateFrom}&dateTo=${dateTo}&limit=200`,
       );
-      setComplianceTl(Array.isArray(data) ? data : []);
+      const list = Array.isArray(data) ? data : [];
+      setComplianceTl(list);
+      const refreshed = await resolveStaleOpenComplianceEvents(list);
+      if (refreshed) {
+        const { data: data2 } = await apiGetJson(
+          `/apps/live-tracking/compliance/timeline?employeeId=${encodeURIComponent(employeeId)}&dateFrom=${dateFrom}&dateTo=${dateTo}&limit=200`,
+        );
+        setComplianceTl(Array.isArray(data2) ? data2 : []);
+      }
     } catch (e) {
       setComplianceTl([]);
-      setComplianceError(e instanceof Error ? e.message : "Could not load compliance timeline");
+      setComplianceError(friendlyLoadError(e));
     } finally {
       setComplianceLoading(false);
     }
@@ -246,26 +455,71 @@ export default function LiveTrackingScreen() {
       loadClients();
       loadClientHaltsToday();
       loadComplianceTimelineToday();
+
+      let cancelled = false;
+      (async () => {
+        try {
+          const { status } = await Location.getForegroundPermissionsAsync();
+          if (cancelled) return;
+          if (status === "granted") {
+            const pos = await Location.getCurrentPositionAsync({
+              accuracy: Location.Accuracy.Balanced,
+            });
+            if (cancelled) return;
+            setMapUserLoc({
+              latitude: pos.coords.latitude,
+              longitude: pos.coords.longitude,
+              accuracy: pos.coords.accuracy ?? undefined,
+              timestamp: pos.timestamp,
+            });
+          } else {
+            setMapUserLoc(null);
+          }
+        } catch {
+          if (!cancelled) setMapUserLoc(null);
+        } finally {
+          if (!cancelled) setMapCenterEpoch((e) => e + 1);
+        }
+      })();
+
+      return () => {
+        cancelled = true;
+      };
     }, [loadMySessionHealth, loadTeam, loadMyRouteToday, loadClients, loadClientHaltsToday, loadComplianceTimelineToday]),
   );
 
   const mapInitial = useMemo(() => {
-    const withLoc = team.filter((t) => t.latitude != null && t.longitude != null);
+    if (
+      mapUserLoc &&
+      Number.isFinite(mapUserLoc.latitude) &&
+      Number.isFinite(mapUserLoc.longitude)
+    ) {
+      return {
+        latitude: mapUserLoc.latitude,
+        longitude: mapUserLoc.longitude,
+        latitudeDelta: 0.08,
+        longitudeDelta: 0.08,
+      };
+    }
+    const withLoc = team.filter((t) => Number.isFinite(t.latitude) && Number.isFinite(t.longitude));
     if (withLoc.length === 0) {
       return { latitude: 20.5937, longitude: 78.9629, latitudeDelta: 8, longitudeDelta: 8 };
     }
     const lat = withLoc.reduce((s, t) => s + t.latitude, 0) / withLoc.length;
     const lng = withLoc.reduce((s, t) => s + t.longitude, 0) / withLoc.length;
     return { latitude: lat, longitude: lng, latitudeDelta: 0.12, longitudeDelta: 0.12 };
-  }, [team]);
+  }, [team, mapUserLoc]);
 
   const routeCoords = useMemo(() => {
     const pts = route?.points;
     if (!Array.isArray(pts) || pts.length < 2) return [];
-    return pts
-      .map((p) => ({ latitude: Number(p.latitude), longitude: Number(p.longitude) }))
-      .filter((p) => Number.isFinite(p.latitude) && Number.isFinite(p.longitude));
+    return pts.map(normalizeRecordCoordinates).filter(Boolean);
   }, [route]);
+
+  const siteVisitSegments = useMemo(
+    () => buildSiteVisitSegmentsFromRoute(route?.points ?? [], clients, SITE_VISIT_RADIUS_M),
+    [route?.points, clients],
+  );
 
   const routeCoordsPlayback = useMemo(() => {
     if (!routeCoords.length) return [];
@@ -340,14 +594,14 @@ export default function LiveTrackingScreen() {
   const searchItems = useMemo(() => {
     const q = query.trim().toLowerCase();
     const teamItems = team
-      .filter((t) => t.latitude != null && t.longitude != null)
+      .filter((t) => Number.isFinite(t.latitude) && Number.isFinite(t.longitude))
       .map((t) => ({
         type: "team", id: t.employeeId, name: t.employeeName,
         subtitle: `${formatAgo(t.trackedAt)}${t.sessionOpen ? " · session active" : ""}`,
         latitude: t.latitude, longitude: t.longitude,
       }));
     const clientItems = clients
-      .filter((c) => c.latitude != null && c.longitude != null)
+      .filter((c) => Number.isFinite(c.latitude) && Number.isFinite(c.longitude))
       .map((c) => ({
         type: "client", id: c.id, name: c.clientName,
         subtitle: "Site", latitude: c.latitude, longitude: c.longitude,
@@ -356,6 +610,28 @@ export default function LiveTrackingScreen() {
     if (!q) return all.slice(0, 60);
     return all.filter((x) => String(x.name || "").toLowerCase().includes(q)).slice(0, 60);
   }, [query, team, clients]);
+
+  const recenterOnMe = useCallback(async () => {
+    try {
+      const { status } = await Location.getForegroundPermissionsAsync();
+      if (status !== "granted") return;
+      setLocatingMe(true);
+      const pos = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+      setMapUserLoc({
+        latitude: pos.coords.latitude,
+        longitude: pos.coords.longitude,
+        accuracy: pos.coords.accuracy ?? undefined,
+        timestamp: pos.timestamp,
+      });
+      setMapCenterEpoch((e) => e + 1);
+    } catch {
+      /* ignore */
+    } finally {
+      setLocatingMe(false);
+    }
+  }, []);
 
   const openDirectionsToTarget = useCallback(async () => {
     if (!selectedTarget) return;
@@ -391,6 +667,15 @@ export default function LiveTrackingScreen() {
 
   return (
     <StackScreen title="Live tracking" subtitle="Team positions & your route (today)" contentStyle={{ paddingHorizontal: 16 }}>
+
+      {mySession.network === "OFFLINE" ? (
+        <View style={styles.offlineBanner}>
+          <WifiOff size={18} color="#C00" />
+          <Text style={styles.offlineBannerText}>
+            No network connection. Some data may not load until you are back online.
+          </Text>
+        </View>
+      ) : null}
 
       {/* ─── My Session Health Card ─── */}
       <GlassView style={[styles.sessionCard, glassFallback]}>
@@ -459,7 +744,22 @@ export default function LiveTrackingScreen() {
             playbackCoord={playbackPosition ?? null}
             focusCoord={focusCoord}
             initialCenter={{ latitude: mapInitial.latitude, longitude: mapInitial.longitude }}
+            userLoc={mapUserLoc}
+            centerOnUser
+            centerMapEpoch={mapCenterEpoch}
           />
+          <Pressable
+            onPress={recenterOnMe}
+            style={({ pressed }) => [styles.mapLocateBtn, pressed && { opacity: 0.88 }]}
+            hitSlop={12}
+            accessibilityLabel="Center map on my GPS location"
+          >
+            {locatingMe ? (
+              <ActivityIndicator size="small" color="#1A73E8" />
+            ) : (
+              <Crosshair size={22} color="#1A73E8" />
+            )}
+          </Pressable>
           <View style={styles.mapAttrib} pointerEvents="none">
             <Text style={styles.mapAttribText}>© OpenStreetMap © CARTO</Text>
           </View>
@@ -521,6 +821,69 @@ export default function LiveTrackingScreen() {
         </GlassView>
       )}
 
+      {Platform.OS === "android" ? (
+        <GlassView style={[styles.card, glassFallback, styles.nativeTrackingHealthCard]}>
+          <View style={styles.sectionHeaderRow}>
+            <ShieldCheck size={18} color={nativeHealth?.nativeServiceRunning ? "#30D158" : "#FF9500"} />
+            <Text style={styles.sectionTitle}>Tracking health</Text>
+          </View>
+          <View style={styles.nativeHealthGrid}>
+            <View style={styles.nativeHealthRow}>
+              <View style={styles.nativeHealthCell}>
+                <Radio size={18} color={nativeHealth?.nativeServiceRunning ? "#30D158" : "#FF9500"} />
+                <Text style={styles.nativeHealthLabel}>Service</Text>
+                <Text style={[styles.nativeHealthVal, nativeHealth?.nativeServiceRunning ? styles.textGreen : styles.textRed]} numberOfLines={1}>
+                  {nativeHealth?.nativeServiceRunning ? "Running" : "Stopped"}
+                </Text>
+              </View>
+              <View style={styles.nativeHealthCell}>
+                <Satellite size={18} color={nativeHealth?.gpsEnabled ? "#30D158" : "#FF3B30"} />
+                <Text style={styles.nativeHealthLabel}>GPS</Text>
+                <Text style={[styles.nativeHealthVal, nativeHealth?.gpsEnabled ? styles.textGreen : styles.textRed]} numberOfLines={1}>
+                  {nativeHealth?.gpsEnabled ? "On" : "Off"}
+                </Text>
+              </View>
+              <View style={styles.nativeHealthCell}>
+                {nativeHealth?.networkConnected ? <Wifi size={18} color="#30D158" /> : <WifiOff size={18} color="#FF3B30" />}
+                <Text style={styles.nativeHealthLabel}>Data</Text>
+                <Text style={[styles.nativeHealthVal, nativeHealth?.networkConnected ? styles.textGreen : styles.textRed]} numberOfLines={1}>
+                  {nativeHealth?.networkConnected ? "On" : "Off"}
+                </Text>
+              </View>
+            </View>
+            <View style={styles.nativeHealthRow}>
+              <View style={styles.nativeHealthCell}>
+                <ShieldCheck size={18} color={nativeHealth?.backgroundLocationGranted ? "#30D158" : "#FF9500"} />
+                <Text style={styles.nativeHealthLabel}>Background</Text>
+                <Text style={[styles.nativeHealthVal, nativeHealth?.backgroundLocationGranted ? styles.textGreen : styles.textRed]} numberOfLines={1}>
+                  {nativeHealth?.backgroundLocationGranted ? "OK" : "Missing"}
+                </Text>
+              </View>
+              <View style={styles.nativeHealthCell}>
+                <BatteryMedium size={18} color={nativeHealth?.batteryOptimizationIgnored ? "#30D158" : "#FF9500"} />
+                <Text style={styles.nativeHealthLabel}>Battery</Text>
+                <Text style={[styles.nativeHealthVal, nativeHealth?.batteryOptimizationIgnored ? styles.textGreen : styles.textRed]} numberOfLines={1}>
+                  {nativeHealth?.batteryOptimizationIgnored ? "OK" : "Limited"}
+                </Text>
+              </View>
+              <View style={styles.nativeHealthCell}>
+                <Timer size={18} color="#007AFF" />
+                <Text style={styles.nativeHealthLabel}>Queued</Text>
+                <Text style={[styles.nativeHealthVal, styles.textPrimary]} numberOfLines={1}>
+                  {nativeHealth?.queuedPingCount ?? 0}
+                </Text>
+              </View>
+            </View>
+          </View>
+          <Text style={styles.healthFootnote}>
+            Last ping:{" "}
+            {nativeHealth?.lastPingAt || mySession.lastPingAt
+              ? formatAgo(nativeHealth?.lastPingAt || mySession.lastPingAt)
+              : "not yet"}
+          </Text>
+        </GlassView>
+      ) : null}
+
       {/* ─── Toolbar ─── */}
       <View style={styles.toolbar}>
         <Pressable onPress={refreshAll} style={({ pressed }) => [styles.toolBtn, pressed && { opacity: 0.88 }]}>
@@ -530,6 +893,10 @@ export default function LiveTrackingScreen() {
         <Pressable onPress={() => setSearchOpen(true)} style={({ pressed }) => [styles.toolBtn, pressed && { opacity: 0.88 }]}>
           <Search size={18} color="#000" />
           <Text style={styles.toolBtnTextDark}>Search</Text>
+        </Pressable>
+        <Pressable onPress={recenterOnMe} style={({ pressed }) => [styles.toolBtn, pressed && { opacity: 0.88 }]}>
+          {locatingMe ? <ActivityIndicator size="small" color="#000" /> : <Crosshair size={18} color="#000" />}
+          <Text style={styles.toolBtnTextDark}>Locate me</Text>
         </Pressable>
         {selectedTarget ? (
           <Pressable onPress={openDirectionsToTarget} style={({ pressed }) => [styles.toolBtnPrimary, pressed && { opacity: 0.88 }]}>
@@ -670,10 +1037,46 @@ export default function LiveTrackingScreen() {
 
       {/* ─── Visited Sites Today ─── */}
       <Text style={[styles.sectionTitle, { marginTop: 18 }]}>Visited sites today (auto-detected)</Text>
-      {clientHaltsLoading ? (
+      <Text style={[styles.muted, { marginBottom: 6, marginTop: -4 }]}>
+        From your GPS pings within {SITE_VISIT_RADIUS_M} m of a saved site.
+      </Text>
+      {clientHaltsLoading && !siteVisitSegments.length ? (
         <ActivityIndicator style={{ marginVertical: 10 }} />
-      ) : clientHaltsError ? (
+      ) : clientHaltsError && !siteVisitSegments.length ? (
         <Text style={styles.err}>{clientHaltsError}</Text>
+      ) : siteVisitSegments.length ? (
+        <GlassView style={[styles.card, glassFallback]}>
+          {siteVisitSegments.map((seg, idx) => (
+            <View
+              key={`${seg.clientId}-${seg.arrivedAt}-${idx}`}
+              style={[styles.visitRow, idx === siteVisitSegments.length - 1 ? styles.visitRowLast : null]}
+            >
+              <View style={[styles.visitDot, seg.ongoing ? styles.visitDotOngoing : null]} />
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.visitSiteName} numberOfLines={2}>
+                  {seg.clientName}
+                </Text>
+                <Text style={styles.visitMeta}>
+                  {seg.ongoing ? (
+                    <>
+                      At site since {formatClock(seg.arrivedAt)}
+                      {" · "}
+                      {formatDuration(seg.durationSec)}
+                      {" · "}
+                      <Text style={styles.visitOngoingLabel}>ongoing</Text>
+                    </>
+                  ) : (
+                    <>
+                      {formatClock(seg.arrivedAt)} → {formatClock(seg.leftAt)}
+                      {" · "}
+                      total {formatDuration(seg.durationSec)}
+                    </>
+                  )}
+                </Text>
+              </View>
+            </View>
+          ))}
+        </GlassView>
       ) : clientHalts?.perClient?.length ? (
         <GlassView style={[styles.card, glassFallback]}>
           {clientHalts.perClient.slice(0, 8).map((c) => (
@@ -690,7 +1093,11 @@ export default function LiveTrackingScreen() {
           ) : null}
         </GlassView>
       ) : (
-        <Text style={styles.muted}>No client halts detected yet (needs a few minutes of pings).</Text>
+        <Text style={styles.muted}>
+          {route?.points?.length
+            ? "No pings within range of a known site yet. Check that this site has coordinates on the map, or wait for more GPS points."
+            : "No route pings for today yet — start a live session so visits can be detected."}
+        </Text>
       )}
 
       {/* ─── Compliance Timeline ─── */}
@@ -783,7 +1190,19 @@ export default function LiveTrackingScreen() {
 }
 
 const styles = StyleSheet.create({
-  // ── Session health card
+  offlineBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: "rgba(255,59,48,0.12)",
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginBottom: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,59,48,0.35)",
+  },
+  offlineBannerText: { flex: 1, color: "#8B0000", fontSize: 13, fontWeight: "700", lineHeight: 18 },
   sessionCard: {
     padding: 16,
     borderRadius: 20,
@@ -809,6 +1228,33 @@ const styles = StyleSheet.create({
   },
   healthLabel: { fontSize: 10, color: "#636366", fontWeight: "700" },
   healthVal: { fontSize: 12, fontWeight: "900" },
+  healthFootnote: { marginTop: 12, fontSize: 11, color: "#636366", fontWeight: "600" },
+  nativeTrackingHealthCard: {
+    marginTop: 4,
+    marginBottom: 14,
+  },
+  nativeHealthGrid: { gap: 8, marginTop: 4 },
+  nativeHealthRow: { flexDirection: "row", gap: 8 },
+  nativeHealthCell: {
+    flex: 1,
+    minWidth: 0,
+    backgroundColor: "rgba(242,242,247,0.95)",
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 6,
+    alignItems: "center",
+    gap: 4,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(0,0,0,0.06)",
+  },
+  nativeHealthLabel: {
+    fontSize: 9,
+    color: "#636366",
+    fontWeight: "700",
+    letterSpacing: 0.2,
+    textTransform: "uppercase",
+  },
+  nativeHealthVal: { fontSize: 12, fontWeight: "800", textAlign: "center" },
   textPrimary: { color: "#000" },
   textGreen: { color: "#30D158" },
   textRed: { color: "#FF3B30" },
@@ -822,6 +1268,25 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     borderWidth: 1,
     borderColor: "rgba(0,122,255,0.2)",
+    position: "relative",
+  },
+  mapLocateBtn: {
+    position: "absolute",
+    right: 10,
+    bottom: 36,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "rgba(255,255,255,0.95)",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(0,122,255,0.35)",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
+    elevation: 3,
   },
   mapAttrib: {
     position: "absolute",
@@ -926,6 +1391,13 @@ const styles = StyleSheet.create({
   siteDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#007AFF" },
   siteRowName: { flex: 1, fontWeight: "800", color: "#000", fontSize: 14 },
   siteRowVal: { fontWeight: "700", color: "#007AFF", fontSize: 13 },
+  visitRow: { flexDirection: "row", alignItems: "flex-start", paddingVertical: 10, gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(0,0,0,0.06)" },
+  visitDot: { width: 8, height: 8, borderRadius: 4, marginTop: 5, backgroundColor: "#007AFF" },
+  visitDotOngoing: { backgroundColor: "#30D158" },
+  visitSiteName: { fontWeight: "800", color: "#000", fontSize: 15 },
+  visitMeta: { color: "#636366", fontSize: 12, fontWeight: "600", marginTop: 4, lineHeight: 17 },
+  visitOngoingLabel: { color: "#30D158", fontWeight: "800" },
+  visitRowLast: { borderBottomWidth: 0 },
 
   // ── Compliance
   complianceRow: { flexDirection: "row", alignItems: "flex-start", paddingVertical: 8, gap: 10 },

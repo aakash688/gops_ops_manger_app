@@ -6,23 +6,42 @@ import { authKey } from "@/utils/auth/store";
  * wrong Host headers and redirect loops (`too many follow-up requests` on Android).
  *
  * Set in `.env`:
- *   EXPO_PUBLIC_API_URL=http://YOUR_LAN_IP:3000/api/v1
- * Android emulator → host machine: http://10.0.2.2:3000/api/v1
+ *   EXPO_PUBLIC_API_URL=https://gops-api.yantralogic.com/api/v1
  * Do not use your `*.created.app` URL here — that is not the Node API.
  */
-function getApiBaseUrl() {
-  const explicit =
-    process.env.EXPO_PUBLIC_API_URL?.trim() ||
-    process.env.EXPO_PUBLIC_GOPS_API_URL?.trim();
-  if (explicit) return explicit.replace(/\/$/, "");
+const PRODUCTION_API_URL = "https://gops-api.yantralogic.com/api/v1";
 
-  const fallback = (
+function normalizeBaseUrl(value) {
+  return value?.trim().replace(/\/$/, "") || "";
+}
+
+function isDevRuntime() {
+  return typeof __DEV__ !== "undefined" && __DEV__;
+}
+
+function isCleartextUrl(value) {
+  try {
+    return new URL(value).protocol !== "https:";
+  } catch {
+    return true;
+  }
+}
+
+export function getApiBaseUrl() {
+  const explicit = normalizeBaseUrl(
+    process.env.EXPO_PUBLIC_API_URL || process.env.EXPO_PUBLIC_GOPS_API_URL,
+  );
+  if (explicit) {
+    return !isDevRuntime() && isCleartextUrl(explicit)
+      ? PRODUCTION_API_URL
+      : explicit;
+  }
+
+  const fallback = normalizeBaseUrl(
     process.env.EXPO_PUBLIC_BASE_URL ||
     process.env.EXPO_PUBLIC_APP_URL ||
-    ""
-  )
-    .trim()
-    .replace(/\/$/, "");
+      "",
+  );
 
   if (!fallback) return "";
 
@@ -30,7 +49,9 @@ function getApiBaseUrl() {
     return "";
   }
 
-  return fallback;
+  return !isDevRuntime() && isCleartextUrl(fallback)
+    ? PRODUCTION_API_URL
+    : fallback;
 }
 
 function joinUrl(base, path) {
@@ -51,7 +72,7 @@ async function getBearer() {
 
 function missingApiUrlError() {
   return new Error(
-    "Set EXPO_PUBLIC_API_URL in .env to your G-ops backend, e.g. http://192.168.1.5:3000/api/v1 (not the *.created.app URL).",
+    `Set EXPO_PUBLIC_API_URL in .env to your G-ops backend, e.g. ${PRODUCTION_API_URL} (not the *.created.app URL).`,
   );
 }
 

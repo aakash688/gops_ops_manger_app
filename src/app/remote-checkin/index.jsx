@@ -34,6 +34,7 @@ import StackScreen from "@/components/StackScreen";
 import FieldCheckinMap from "@/components/FieldCheckinMap";
 import { apiGetJson, apiPostJson } from "@/utils/api";
 import { openMapsDirections, openMapsPin } from "@/utils/openInMaps";
+import { normalizeRecordCoordinates, normalizeRecordCoordinatesList } from "@/utils/coordinates";
 import { startLiveTracking, stopLiveTracking } from "@/services/liveTracking";
 import { useAuthStore } from "@/utils/auth/store";
 
@@ -75,6 +76,15 @@ function toLocationState(loc, source, cached = false) {
     timestamp: loc.timestamp ?? Date.now(),
     source,
     cached,
+  };
+}
+
+function normalizeNearbyResult(data) {
+  if (!data || typeof data !== "object") return data ?? null;
+  return {
+    ...data,
+    nearest: data.nearest ? normalizeRecordCoordinates(data.nearest) : data.nearest,
+    inRange: normalizeRecordCoordinatesList(data.inRange),
   };
 }
 
@@ -167,7 +177,7 @@ export default function RemoteCheckinScreen() {
         apiGetJson("/apps/field-checkin/clients"),
         apiGetJson("/apps/field-checkin/summary"),
       ]);
-      setClients(Array.isArray(cl) ? cl : []);
+      setClients(normalizeRecordCoordinatesList(cl));
       setSummary(sm ?? null);
     } catch (e) {
       setSummary(null);
@@ -192,8 +202,9 @@ export default function RemoteCheckinScreen() {
       const { data } = await apiGetJson(
         `/apps/field-checkin/nearby?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lng)}`,
       );
-      setNearby(data);
-      setSelectedClientId((prev) => prev || data?.nearest?.id || data?.inRange?.[0]?.id || null);
+      const normalized = normalizeNearbyResult(data);
+      setNearby(normalized);
+      setSelectedClientId((prev) => prev || normalized?.nearest?.id || normalized?.inRange?.[0]?.id || null);
     } catch {
       setNearby(null);
     }
@@ -296,11 +307,27 @@ export default function RemoteCheckinScreen() {
   const active = summary?.activeSession;
   const inRange = nearby?.inRange ?? [];
   const effectiveSelectedClientId = selectedClientId ?? active?.clientId;
+  const nearbyById = useMemo(
+    () => new Map(inRange.map((c) => [c.id, c])),
+    [inRange],
+  );
+  const mapClients = useMemo(
+    () => {
+      const merged = clients.map((c) => {
+        const nearbyClient = nearbyById.get(c.id);
+        return nearbyClient ? { ...c, ...nearbyClient } : c;
+      });
+      for (const c of inRange) {
+        if (!merged.some((existing) => existing.id === c.id)) merged.push(c);
+      }
+      return merged;
+    },
+    [clients, inRange, nearbyById],
+  );
   const selected =
-    clients.find((c) => c.id === effectiveSelectedClientId) ||
-    inRange.find((c) => c.id === effectiveSelectedClientId) ||
+    mapClients.find((c) => c.id === effectiveSelectedClientId) ||
     null;
-  const selectedNearby = selected ? inRange.find((c) => c.id === selected.id) : null;
+  const selectedNearby = selected ? nearbyById.get(selected.id) : null;
   const selectedDistanceM =
     selectedNearby?.distanceMeters ??
     (selected && userLoc ? metersBetween(userLoc, { latitude: selected.latitude, longitude: selected.longitude }) : null);
@@ -316,7 +343,7 @@ export default function RemoteCheckinScreen() {
   const visibleSegments = useMemo(() => summary?.todaySegments?.slice(0, 4) ?? [], [summary?.todaySegments]);
 
   const mapProps = {
-    clients,
+    clients: mapClients,
     selectedClientId: effectiveSelectedClientId,
     onSelectClient: setSelectedClientId,
     userLoc,
@@ -575,6 +602,11 @@ export default function RemoteCheckinScreen() {
           </View>
           <View style={styles.mapCanvas}>
             <FieldCheckinMap {...mapProps} height={Platform.OS === "web" ? 180 : 320} />
+            {Platform.OS !== "web" ? (
+              <View style={styles.mapAttrib} pointerEvents="none">
+                <Text style={styles.mapAttribText}>© OpenStreetMap © CARTO</Text>
+              </View>
+            ) : null}
           </View>
           <View style={styles.selectedSiteCard}>
             <View style={styles.selectedTopRow}>
@@ -594,6 +626,11 @@ export default function RemoteCheckinScreen() {
                         : `${formatDistance(selectedDistanceM)} from you · loading range…`
                     : "Select a marker or nearby site to continue"}
                 </Text>
+                {__DEV__ && selected ? (
+                  <Text style={styles.coordDebugText}>
+                    Plot: {Number(selected.latitude).toFixed(6)}, {Number(selected.longitude).toFixed(6)}
+                  </Text>
+                ) : null}
               </View>
             </View>
               <View style={styles.siteInfoGrid}>
@@ -740,6 +777,11 @@ export default function RemoteCheckinScreen() {
           </View>
           <View style={styles.modalMapWrap}>
             <FieldCheckinMap {...mapProps} fullScreen />
+            {Platform.OS !== "web" ? (
+              <View style={styles.mapAttrib} pointerEvents="none">
+                <Text style={styles.mapAttribText}>© OpenStreetMap © CARTO</Text>
+              </View>
+            ) : null}
             <View style={styles.modalSelectedCard}>
               <Text style={styles.modalSelectedTitle} numberOfLines={1}>
                 {selected?.clientName ?? "Select a site"}
@@ -753,6 +795,11 @@ export default function RemoteCheckinScreen() {
                       : `${formatDistance(selectedDistanceM)} away`
                   : "Tap a marker to view site details"}
               </Text>
+              {__DEV__ && selected ? (
+                <Text style={styles.coordDebugText}>
+                  Plot: {Number(selected.latitude).toFixed(6)}, {Number(selected.longitude).toFixed(6)}
+                </Text>
+              ) : null}
             </View>
           </View>
           <View style={[styles.modalFooter, { paddingBottom: Math.max(insets.bottom, 12) }]}>
@@ -834,7 +881,23 @@ const styles = StyleSheet.create({
   mapHint: { fontSize: 12, color: "#5F6368", marginTop: 3, fontWeight: "700" },
   mapActions: { flexDirection: "row", alignItems: "center", gap: 4 },
   iconBtn: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center", backgroundColor: "#E8F0FE" },
-  mapCanvas: { marginHorizontal: 10, borderRadius: 20, overflow: "hidden", backgroundColor: "#EEF3F8" },
+  mapCanvas: {
+    marginHorizontal: 10,
+    borderRadius: 20,
+    overflow: "hidden",
+    backgroundColor: "#EEF3F8",
+    position: "relative",
+  },
+  mapAttrib: {
+    position: "absolute",
+    right: 6,
+    bottom: 4,
+    backgroundColor: "rgba(255,255,255,0.85)",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  mapAttribText: { fontSize: 9, color: "#555" },
   selectedSiteCard: {
     margin: 10,
     padding: 14,
@@ -849,6 +912,7 @@ const styles = StyleSheet.create({
   siteBadgeWarn: { backgroundColor: "#FEF7E0" },
   selectedTitle: { color: "#202124", fontSize: 18, fontWeight: "900" },
   selectedMeta: { color: "#5F6368", fontSize: 13, marginTop: 2, fontWeight: "700" },
+  coordDebugText: { color: "#8A2BE2", fontSize: 11, marginTop: 3, fontWeight: "700" },
   siteInfoGrid: { flexDirection: "row", gap: 8, marginTop: 12 },
   siteInfoItem: { flex: 1, padding: 10, borderRadius: 14, backgroundColor: "#F8FAFC" },
   siteInfoLabel: { color: "#6B7280", fontSize: 10, fontWeight: "900", textTransform: "uppercase" },
@@ -886,7 +950,7 @@ const styles = StyleSheet.create({
   modalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 8, paddingVertical: 10, backgroundColor: "#1C1C1E" },
   modalClose: { padding: 8, width: 44 },
   modalTitle: { color: "#FFF", fontSize: 17, fontWeight: "800" },
-  modalMapWrap: { flex: 1 },
+  modalMapWrap: { flex: 1, position: "relative" },
   modalSelectedCard: {
     position: "absolute",
     left: 14,

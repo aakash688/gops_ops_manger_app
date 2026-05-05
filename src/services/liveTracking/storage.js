@@ -69,6 +69,35 @@ export async function replaceQueue(items) {
   await AsyncStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(items));
 }
 
+/** Ping / compliance queue sizes and last queued ping ISO time (for health UI when native module is absent). */
+export async function getPingComplianceQueueSnapshot() {
+  const [rawPing, rawComp] = await Promise.all([
+    AsyncStorage.getItem(QUEUE_STORAGE_KEY),
+    AsyncStorage.getItem(COMPLIANCE_QUEUE_KEY),
+  ]);
+  let pings = [];
+  let compliance = [];
+  try {
+    pings = rawPing ? JSON.parse(rawPing) : [];
+  } catch {
+    pings = [];
+  }
+  try {
+    compliance = rawComp ? JSON.parse(rawComp) : [];
+  } catch {
+    compliance = [];
+  }
+  if (!Array.isArray(pings)) pings = [];
+  if (!Array.isArray(compliance)) compliance = [];
+  const last = pings.length ? pings[pings.length - 1] : null;
+  const lastQueuedPingAt = last?.timestamp ? String(last.timestamp) : null;
+  return {
+    queuedPingCount: pings.length,
+    queuedComplianceCount: compliance.length,
+    lastQueuedPingAt,
+  };
+}
+
 export async function enqueueComplianceEvents(items) {
   const raw = await AsyncStorage.getItem(COMPLIANCE_QUEUE_KEY);
   let q = [];

@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { View, StyleSheet } from "react-native";
 import {
   MapView as MLMapView,
@@ -27,8 +27,13 @@ export default function TrackingMapLibre({
   focusZoom = 14,
   initialCenter,
   fullScreen,
+  userLoc = null,
+  centerOnUser = true,
+  centerMapEpoch = 0,
 }) {
   const mapStyle = useMemo(() => getFieldMapStyle(), []);
+  const centeredOnUserRef = useRef(false);
+  const didInitialCenterRef = useRef(false);
 
   const routeFeature = useMemo(() => {
     if (!Array.isArray(routeCoords) || routeCoords.length < 2) return null;
@@ -43,14 +48,32 @@ export default function TrackingMapLibre({
   }, [routeCoords]);
 
   useEffect(() => {
+    centeredOnUserRef.current = false;
+    didInitialCenterRef.current = false;
+  }, [centerMapEpoch]);
+
+  useEffect(() => {
     if (!cameraRef.current) return;
+    if (focusCoord) return;
+    if (centerOnUser && userLoc && Number.isFinite(userLoc.latitude) && Number.isFinite(userLoc.longitude)) return;
+    if (didInitialCenterRef.current) return;
+    didInitialCenterRef.current = true;
     cameraRef.current.setCamera({
       centerCoordinate: [initialCenter.longitude, initialCenter.latitude],
       zoomLevel: fullScreen ? 14 : 13,
       animationDuration: 500,
       animationMode: "flyTo",
     });
-  }, [initialCenter.latitude, initialCenter.longitude, fullScreen, cameraRef]);
+  }, [
+    initialCenter.latitude,
+    initialCenter.longitude,
+    fullScreen,
+    cameraRef,
+    focusCoord,
+    centerOnUser,
+    userLoc?.latitude,
+    userLoc?.longitude,
+  ]);
 
   useEffect(() => {
     if (!cameraRef.current) return;
@@ -63,9 +86,30 @@ export default function TrackingMapLibre({
     });
   }, [focusCoord?.latitude, focusCoord?.longitude, focusZoom, cameraRef]);
 
+  useEffect(() => {
+    if (!centerOnUser) return;
+    if (!cameraRef.current) return;
+    if (!userLoc || !Number.isFinite(userLoc.latitude) || !Number.isFinite(userLoc.longitude)) return;
+    if (centeredOnUserRef.current) return;
+    centeredOnUserRef.current = true;
+    cameraRef.current.setCamera({
+      centerCoordinate: [userLoc.longitude, userLoc.latitude],
+      zoomLevel: fullScreen ? 15 : 14,
+      animationDuration: 700,
+      animationMode: "flyTo",
+    });
+  }, [centerOnUser, userLoc?.latitude, userLoc?.longitude, fullScreen, cameraRef, centerMapEpoch]);
+
   return (
     <View style={[{ overflow: "hidden" }, outerStyle]}>
-      <MLMapView style={StyleSheet.absoluteFill} mapStyle={mapStyle} attributionEnabled logoEnabled={false}>
+      <MLMapView
+        style={StyleSheet.absoluteFill}
+        mapStyle={mapStyle}
+        attributionEnabled={false}
+        logoEnabled={false}
+        compassEnabled
+        scaleBarEnabled
+      >
         <Camera
           ref={cameraRef}
           defaultSettings={{
@@ -77,6 +121,17 @@ export default function TrackingMapLibre({
 
         {showsUserLocation ? (
           <UserLocation visible showsUserHeadingIndicator={false} androidRenderMode="normal" />
+        ) : null}
+
+        {userLoc && Number.isFinite(userLoc.latitude) && Number.isFinite(userLoc.longitude) ? (
+          <PointAnnotation
+            id={`lt-user-${Math.round(userLoc.latitude * 100000)}-${Math.round(userLoc.longitude * 100000)}`}
+            coordinate={[userLoc.longitude, userLoc.latitude]}
+          >
+            <View style={styles.userDotOuter}>
+              <View style={styles.userDotInner} />
+            </View>
+          </PointAnnotation>
         ) : null}
 
         {routeFeature ? (
@@ -97,7 +152,7 @@ export default function TrackingMapLibre({
         {/* Client site markers — identical to FieldCheckinMap */}
         {clients.map((c) => {
           const sel = c.id === selectedClientId;
-          return c.latitude != null && c.longitude != null ? (
+          return Number.isFinite(c.latitude) && Number.isFinite(c.longitude) ? (
             <PointAnnotation
               key={`client-${c.id}-${sel ? "sel" : "def"}`}
               id={`client-${c.id}-${sel ? "sel" : "def"}`}
@@ -117,7 +172,7 @@ export default function TrackingMapLibre({
         {/* Team / guard markers */}
         {teamMarkers.map((t) => {
           const sel = t.employeeId === selectedGuardId;
-          return t.latitude != null && t.longitude != null ? (
+          return Number.isFinite(t.latitude) && Number.isFinite(t.longitude) ? (
             <PointAnnotation
               key={`guard-${t.employeeId ?? `${t.latitude},${t.longitude}`}-${sel ? "sel" : "def"}`}
               id={String(`guard-${t.employeeId ?? `${t.latitude},${t.longitude}`}-${sel ? "sel" : "def"}`)}
@@ -147,6 +202,22 @@ export default function TrackingMapLibre({
 }
 
 const styles = StyleSheet.create({
+  userDotOuter: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "rgba(26,115,232,0.20)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  userDotInner: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: "#1A73E8",
+    borderWidth: 3,
+    borderColor: "#FFFFFF",
+  },
   playbackDotOuter: {
     width: 22,
     height: 22,

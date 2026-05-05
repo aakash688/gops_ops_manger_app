@@ -4,7 +4,9 @@ import * as TaskManager from "expo-task-manager";
 import * as Battery from "expo-battery";
 import NetInfo from "@react-native-community/netinfo";
 import * as Application from "expo-application";
+import * as Notifications from "expo-notifications";
 import { LIVE_TRACKING_TASK } from "./constants";
+import { useAuthStore } from "@/utils/auth/store";
 import {
   getSessionId,
   setSessionMeta,
@@ -18,8 +20,17 @@ import {
   replaceComplianceQueue,
   enqueueComplianceEvents,
   getOrCreateFallbackDeviceId,
+  getPingComplianceQueueSnapshot,
 } from "./storage";
-import { apiPostJson, apiGetJson } from "@/utils/api";
+import { apiPostJson, apiGetJson, getApiBaseUrl } from "@/utils/api";
+import {
+  startNativeTracking,
+  stopNativeTracking,
+  syncNativeTrackingState,
+  getNativeTrackingHealth,
+  isNativeTrackingAvailable,
+  openBatteryOptimizationSettings,
+} from "./native";
 
 import "./task";
 
@@ -28,6 +39,97 @@ function networkLabel(state) {
   if (state.type === "wifi") return "WIFI";
   if (state.type === "cellular") return "CELLULAR";
   return "UNKNOWN";
+}
+
+function mergeTrackingHealth(native, js) {
+  const nativeMod = isNativeTrackingAvailable();
+  return {
+    trackingActive: !!(native.trackingActive || js.trackingActive),
+    nativeServiceRunning: !!(native.nativeServiceRunning || js.nativeServiceRunning),
+    foregroundLocationGranted: !!(native.foregroundLocationGranted || js.foregroundLocationGranted),
+    backgroundLocationGranted: !!(native.backgroundLocationGranted || js.backgroundLocationGranted),
+    notificationGranted: !!(native.notificationGranted || js.notificationGranted),
+    gpsEnabled: !!(native.gpsEnabled || js.gpsEnabled),
+    networkConnected: !!(native.networkConnected || js.networkConnected),
+    batteryOptimizationIgnored: nativeMod
+      ? !!native.batteryOptimizationIgnored
+      : !!js.batteryOptimizationIgnored,
+    lastPingAt: native.lastPingAt || js.lastPingAt || null,
+    lastComplianceReason: native.lastComplianceReason ?? js.lastComplianceReason ?? null,
+    queuedPingCount: Math.max(
+      Number(native.queuedPingCount) || 0,
+      Number(js.queuedPingCount) || 0,
+    ),
+    queuedComplianceCount: Math.max(
+      Number(native.queuedComplianceCount) || 0,
+      Number(js.queuedComplianceCount) || 0,
+    ),
+  };
+}
+
+/** Expo / JS signals — matches what "Live session" uses when `GopsTracking` is not linked. */
+async function buildJsTrackingHealthSnapshot() {
+  const empty = {
+    trackingActive: false,
+    nativeServiceRunning: false,
+    foregroundLocationGranted: false,
+    backgroundLocationGranted: false,
+    notificationGranted: false,
+    gpsEnabled: false,
+    networkConnected: false,
+    batteryOptimizationIgnored: true,
+    lastPingAt: null,
+    lastComplianceReason: null,
+    queuedPingCount: 0,
+    queuedComplianceCount: 0,
+  };
+  if (Platform.OS === "web") return empty;
+
+  const sid = await getSessionId().catch(() => null);
+  const [
+    netState,
+    servicesEnabled,
+    fgPerm,
+    bgPerm,
+    taskStarted,
+    queueSnap,
+    notifPerm,
+  ] = await Promise.all([
+    NetInfo.fetch().catch(() => null),
+    Location.hasServicesEnabledAsync().catch(() => false),
+    Location.getForegroundPermissionsAsync().catch(() => ({ status: "undetermined" })),
+    Location.getBackgroundPermissionsAsync().catch(() => ({ status: "undetermined" })),
+    Location.hasStartedLocationUpdatesAsync(LIVE_TRACKING_TASK).catch(() => false),
+    getPingComplianceQueueSnapshot().catch(() => ({
+      queuedPingCount: 0,
+      queuedComplianceCount: 0,
+      lastQueuedPingAt: null,
+    })),
+    Notifications.getPermissionsAsync().catch(() => ({ status: "undetermined" })),
+  ]);
+
+  const networkConnected = netState?.isConnected === true;
+  const fgOk = fgPerm?.status === "granted";
+  const bgOk = bgPerm?.status === "granted";
+  const notificationGranted = notifPerm?.status === "granted";
+  const taskRunning = !!taskStarted;
+  const nativeServiceRunning = !!(sid && taskRunning);
+  const gpsEnabled = !!(servicesEnabled && fgOk);
+
+  return {
+    ...empty,
+    trackingActive: !!sid && taskRunning,
+    nativeServiceRunning,
+    foregroundLocationGranted: fgOk,
+    backgroundLocationGranted: bgOk,
+    notificationGranted,
+    gpsEnabled,
+    networkConnected,
+    batteryOptimizationIgnored: true,
+    lastPingAt: queueSnap.lastQueuedPingAt,
+    queuedPingCount: queueSnap.queuedPingCount,
+    queuedComplianceCount: queueSnap.queuedComplianceCount,
+  };
 }
 
 async function enrichPing(p) {
@@ -148,6 +250,15 @@ export async function startLiveTracking(opts = {}) {
   if (!sessionId) throw new Error("No tracking session returned from server.");
 
   await setSessionMeta(sessionId, pingIntervalSec);
+  const auth = useAuthStore.getState?.().auth;
+
+  await startNativeTracking({
+    employeeId: auth?.user?.employeeId ?? null,
+    sessionId,
+    apiBaseUrl: getApiBaseUrl(),
+    token: auth?.jwt ?? null,
+    pingIntervalSec,
+  }).catch(() => {});
 
   const isTaskDefined = TaskManager.isTaskDefined(LIVE_TRACKING_TASK);
   if (!isTaskDefined) {
@@ -182,6 +293,8 @@ export async function startLiveTracking(opts = {}) {
 }
 
 export async function stopLiveTracking() {
+  await stopNativeTracking().catch(() => {});
+
   if (Platform.OS !== "web") {
     try {
       const started = await Location.hasStartedLocationUpdatesAsync(LIVE_TRACKING_TASK);
@@ -229,6 +342,15 @@ export async function resumeLiveTrackingIfNeeded() {
 
   const pingIntervalSec = await getPingIntervalSec();
   const intervalMs = Math.max(30_000, Math.min(600_000, pingIntervalSec * 1000));
+  const auth = useAuthStore.getState?.().auth;
+
+  await startNativeTracking({
+    employeeId: auth?.user?.employeeId ?? null,
+    sessionId,
+    apiBaseUrl: getApiBaseUrl(),
+    token: auth?.jwt ?? null,
+    pingIntervalSec,
+  }).catch(() => {});
 
   try {
     const already = await Location.hasStartedLocationUpdatesAsync(LIVE_TRACKING_TASK);
@@ -255,10 +377,27 @@ export async function isLiveTrackingSessionActive() {
   if (Platform.OS === "web") return false;
   const sid = await getSessionId();
   if (!sid) return false;
+  if (isNativeTrackingAvailable()) {
+    const nativeHealth = await getNativeTrackingHealth().catch(() => null);
+    if (nativeHealth?.nativeServiceRunning) return true;
+  }
   try {
     return await Location.hasStartedLocationUpdatesAsync(LIVE_TRACKING_TASK);
   } catch {
     return false;
+  }
+}
+
+export async function getLiveTrackingHealth() {
+  const js = await buildJsTrackingHealthSnapshot();
+  if (!isNativeTrackingAvailable()) {
+    return js;
+  }
+  try {
+    const native = await getNativeTrackingHealth();
+    return mergeTrackingHealth(native, js);
+  } catch {
+    return js;
   }
 }
 
@@ -287,3 +426,4 @@ export async function syncLiveTrackingWithFieldSession() {
 }
 
 export { getSessionId } from "./storage";
+export { syncNativeTrackingState, openBatteryOptimizationSettings };

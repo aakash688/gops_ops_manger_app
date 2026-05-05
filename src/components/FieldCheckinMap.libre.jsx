@@ -88,7 +88,7 @@ export default function FieldCheckinMapLibre({
       <MLMapView
         style={StyleSheet.absoluteFill}
         mapStyle={mapStyle}
-        attributionEnabled
+        attributionEnabled={false}
         logoEnabled={false}
         compassEnabled
         scaleBarEnabled
@@ -128,7 +128,7 @@ export default function FieldCheckinMapLibre({
 
         {clients.map((c) => {
           const selected = c.id === selectedClientId;
-          return (
+          return Number.isFinite(c.latitude) && Number.isFinite(c.longitude) ? (
             <PointAnnotation
               key={`${c.id}-${selected ? "selected" : "default"}`}
               id={`${c.id}-${selected ? "selected" : "default"}`}
@@ -142,7 +142,7 @@ export default function FieldCheckinMapLibre({
                 label={selected ? c.clientName : undefined}
               />
             </PointAnnotation>
-          );
+          ) : null;
         })}
       </MLMapView>
     </View>

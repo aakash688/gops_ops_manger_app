@@ -1,21 +1,23 @@
-import { useEffect, useMemo, useRef } from "react";
-import { View, Text, StyleSheet, Platform, NativeModules } from "react-native";
-import MapView, { Marker, Polyline, UrlTile } from "react-native-maps";
-import { CARTO_VOYAGER_URL_TEMPLATE } from "@/config/fieldMapStyle";
-import MapMarkerPin from "@/components/MapMarkerPin";
+import { useMemo, useRef } from "react";
+import { View, Text, StyleSheet, Platform } from "react-native";
 
-const MLRN = NativeModules.MLRNModule;
+const USE_MAPLIBRE = process.env.EXPO_PUBLIC_MAP_ENGINE === "maplibre";
 
 let MapLibreEntry = null;
 function getMapLibreComponent() {
+  if (!USE_MAPLIBRE) return null;
   if (!MapLibreEntry) {
-    MapLibreEntry = require("./TrackingMap.libre").default;
+    try {
+      MapLibreEntry = require("./TrackingMap.libre").default;
+    } catch {
+      MapLibreEntry = false;
+    }
   }
-  return MapLibreEntry;
+  return MapLibreEntry || null;
 }
 
 export function isMapLibreAvailable() {
-  return Platform.OS !== "web" && !!MLRN;
+  return Platform.OS !== "web" && !!getMapLibreComponent();
 }
 
 export default function TrackingMap({
@@ -33,14 +35,23 @@ export default function TrackingMap({
   focusCoord = null,
   focusZoom = 14,
   initialCenter = { latitude: 20.5937, longitude: 78.9629 },
+  userLoc = null,
+  centerOnUser = true,
+  centerMapEpoch = 0,
 }) {
   const cameraRef = useRef(null);
-  const mapRef = useRef(null);
   const outerStyle = fullScreen ? { flex: 1, minHeight: 200 } : { height, borderRadius: 16 };
 
   const computedInitial = useMemo(() => {
+    if (
+      userLoc &&
+      Number.isFinite(userLoc.latitude) &&
+      Number.isFinite(userLoc.longitude)
+    ) {
+      return { latitude: userLoc.latitude, longitude: userLoc.longitude };
+    }
     if (teamMarkers?.length) {
-      const withLoc = teamMarkers.filter((t) => t.latitude != null && t.longitude != null);
+      const withLoc = teamMarkers.filter((t) => Number.isFinite(t.latitude) && Number.isFinite(t.longitude));
       if (withLoc.length) {
         const lat = withLoc.reduce((s, t) => s + t.latitude, 0) / withLoc.length;
         const lng = withLoc.reduce((s, t) => s + t.longitude, 0) / withLoc.length;
@@ -48,7 +59,7 @@ export default function TrackingMap({
       }
     }
     return initialCenter;
-  }, [teamMarkers, initialCenter]);
+  }, [teamMarkers, initialCenter, userLoc]);
 
   if (Platform.OS === "web") {
     return (
@@ -58,111 +69,15 @@ export default function TrackingMap({
     );
   }
 
-  // Expo Go / no MapLibre native module → react-native-maps fallback (requires Google Maps on Android).
-  // Dev builds with MapLibre linked will use TrackingMapLibre and avoid Google API key requirements.
-  if (!MLRN) {
-    useEffect(() => {
-      if (!focusCoord || !mapRef.current) return;
-      try {
-        mapRef.current.animateToRegion(
-          {
-            latitude: focusCoord.latitude,
-            longitude: focusCoord.longitude,
-            latitudeDelta: 0.04,
-            longitudeDelta: 0.04,
-          },
-          500,
-        );
-      } catch {
-        // ignore
-      }
-    }, [focusCoord?.latitude, focusCoord?.longitude]);
-
+  const TrackingMapLibre = getMapLibreComponent();
+  if (!TrackingMapLibre) {
     return (
-      <View style={[{ overflow: "hidden" }, outerStyle]}>
-        <MapView
-          ref={mapRef}
-          style={StyleSheet.absoluteFill}
-          initialRegion={{
-            latitude: computedInitial.latitude,
-            longitude: computedInitial.longitude,
-            latitudeDelta: fullScreen ? 0.06 : 0.08,
-            longitudeDelta: fullScreen ? 0.06 : 0.08,
-          }}
-          showsUserLocation={showsUserLocation}
-          showsMyLocationButton
-        >
-          <UrlTile urlTemplate={CARTO_VOYAGER_URL_TEMPLATE} maximumZ={22} flipY={false} />
-          {/* Client site markers — identical to FieldCheckinMap */}
-          {clients.map((c) => {
-            const sel = c.id === selectedClientId;
-            return c.latitude != null && c.longitude != null ? (
-              <Marker
-                key={`client-${c.id}-${sel ? "sel" : "def"}`}
-                coordinate={{ latitude: c.latitude, longitude: c.longitude }}
-                title={c.clientName}
-                anchor={{ x: 0.5, y: 1 }}
-                tracksViewChanges={sel}
-                onPress={() => onSelectClient?.(c.id)}
-              >
-                <MapMarkerPin
-                  type="client"
-                  color={sel ? "#F9AB00" : "#EA4335"}
-                  selected={sel}
-                  label={sel ? c.clientName : undefined}
-                />
-              </Marker>
-            ) : null;
-          })}
-
-          {/* Team / guard markers */}
-          {teamMarkers.map((t) => {
-            const sel = t.employeeId === selectedGuardId;
-            return t.latitude != null && t.longitude != null ? (
-              <Marker
-                key={`guard-${t.employeeId ?? `${t.latitude},${t.longitude}`}-${sel ? "sel" : "def"}`}
-                coordinate={{ latitude: t.latitude, longitude: t.longitude }}
-                title={t.employeeName}
-                description={t.subtitle}
-                anchor={{ x: 0.5, y: 1 }}
-                tracksViewChanges={sel}
-                onPress={() => onSelectGuard?.(t.employeeId)}
-              >
-                <MapMarkerPin
-                  type="guard"
-                  color={sel ? "#F9AB00" : (t.pinColor || "#1A73E8")}
-                  selected={sel}
-                  label={t.employeeName}
-                />
-              </Marker>
-            ) : null;
-          })}
-          {routeCoords.length > 1 ? (
-            <Polyline
-              coordinates={routeCoords}
-              strokeColor="#1A73E8"
-              strokeWidth={4}
-              lineDashPattern={undefined}
-              lineJoin="round"
-              lineCap="round"
-            />
-          ) : null}
-          {playbackCoord ? (
-            <Marker coordinate={playbackCoord} anchor={{ x: 0.5, y: 0.5 }} tracksViewChanges={false}>
-              <View style={styles.playbackDotOuter}>
-                <View style={styles.playbackDotInner} />
-              </View>
-            </Marker>
-          ) : null}
-        </MapView>
-        <View style={styles.attrib} pointerEvents="none">
-          <Text style={styles.attribText}>© OpenStreetMap © CARTO</Text>
-        </View>
+      <View style={[styles.fallbackBox, fullScreen ? { flex: 1 } : { height }]}>
+        <Text style={styles.fallbackText}>Map engine unavailable in this build.</Text>
       </View>
     );
   }
 
-  const TrackingMapLibre = getMapLibreComponent();
   return (
     <TrackingMapLibre
       outerStyle={outerStyle}
@@ -180,6 +95,9 @@ export default function TrackingMap({
       focusZoom={focusZoom}
       initialCenter={computedInitial}
       fullScreen={fullScreen}
+      userLoc={userLoc}
+      centerOnUser={centerOnUser}
+      centerMapEpoch={centerMapEpoch}
     />
   );
 }

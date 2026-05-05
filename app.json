@@ -1,30 +1,26 @@
 {
   "expo": {
-    "name": "Anything mobile app",
+    "name": "G-OPS Manger",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/app_icon.png",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "platforms": [
+      "android"
+    ],
     "scheme": "anything-mobile",
-    "ios": {
-      "supportsTablet": true,
-      "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false,
-        "NSContactsUsageDescription": "Allow saving client contacts to your address book."
-      }
-    },
     "android": {
-      "usesCleartextTraffic": true,
+      "usesCleartextTraffic": false,
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "foregroundImage": "./assets/images/app_icon.png",
         "backgroundColor": "#ffffff"
       },
       "permissions": [
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS"
       ],
-      "package": "xyz.create.CreateExpoEnvironment"
+      "package": "com.yantralogic.gops_manger"
     },
     "plugins": [
       "./plugins/withAndroidWindowsGradleProps",
@@ -37,20 +33,12 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
+          "image": "./assets/images/app_icon.png",
           "imageWidth": 200,
           "resizeMode": "contain"
         }
       ],
       "expo-audio",
-      [
-        "expo-build-properties",
-        {
-          "ios": {
-            "useFrameworks": "static"
-          }
-        }
-      ],
       [
         "expo-video",
         {
@@ -63,20 +51,12 @@
         "expo-location",
         {
           "locationAlwaysAndWhenInUsePermission": "G-ops shares your live location with your organization during duty for safety and attendance verification.",
-          "isAndroidBackgroundLocationEnabled": true,
-          "isIosBackgroundLocationEnabled": true
+          "isAndroidBackgroundLocationEnabled": true
         }
       ],
       "expo-secure-store",
       "expo-web-browser",
-      "@maplibre/maplibre-react-native",
-      [
-        "react-native-google-mobile-ads",
-        {
-          "androidAppId": "ca-app-pub-3940256099942544~3347511713",
-          "iosAppId": "ca-app-pub-3940256099942544~1458002511"
-        }
-      ]
+      "@maplibre/maplibre-react-native"
     ],
     "web": {
       "bundler": "metro",

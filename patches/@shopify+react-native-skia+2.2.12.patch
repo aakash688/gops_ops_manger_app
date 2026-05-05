@@ -1,0 +1,28 @@
+diff --git a/node_modules/@shopify/react-native-skia/android/build.gradle b/node_modules/@shopify/react-native-skia/android/build.gradle
+index 9a8b7c6d..f1e2d3a4 100644
+--- a/node_modules/@shopify/react-native-skia/android/build.gradle
++++ b/node_modules/@shopify/react-native-skia/android/build.gradle
+@@ -81,9 +81,22 @@
+     )
+ }
+ 
++// Resolve RN prefab path without a '*' in the string (Gradle 8 Windows: configureCMake snapshot).
+ def prebuiltDir = sourceBuild
+     ? "$nodeModules/react-native/ReactAndroid/src/main/jni/prebuilt/lib"
+-    : "$buildDir/react-native-0*/jni"
++    : {
++        def base = file("$buildDir")
++        if (base.exists()) {
++          def hits = base.listFiles()?.findAll { f ->
++            f.isDirectory() && f.name.startsWith("react-native-0") && new File(f, "jni").isDirectory()
++          }
++          if (hits && !hits.isEmpty()) {
++            def hit = hits.max { it.lastModified() }
++            return new File(hit, "jni").absolutePath.replace('\\', '/')
++          }
++        }
++        return new File(base, "react-native-prefab/jni").absolutePath.replace('\\', '/')
++      }()
+ 
+ 
+ def buildType = "debug"

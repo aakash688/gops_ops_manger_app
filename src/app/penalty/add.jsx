@@ -541,12 +541,9 @@ export default function PenaltiesScreen() {
             {CONFIGURED_API_URL || "(EXPO_PUBLIC_API_URL is empty — set it in .env and restart Expo with --clear)"}
           </Text>
           <Text style={{ fontSize: 13, color: "#666", lineHeight: 20, marginBottom: 20 }}>
-            • PC and phone on the same Wi‑Fi (not guest isolation).{"\n"}
-            • On PC run `ipconfig` — if IPv4 changed, update EXPO_PUBLIC_API_URL (e.g. http://YOUR_IP:3000/api/v1).{"\n"}
-            • Windows: allow inbound TCP 3000 for Node (or turn off firewall briefly to test).{"\n"}
-            • USB debugging: run `adb reverse tcp:3000 tcp:3000`, then set EXPO_PUBLIC_API_URL to
-            http://127.0.0.1:3000/api/v1 and reload the app.{"\n"}
-            • Confirm the backend is running and shows “listening on 0.0.0.0:3000”.
+            • Release APKs must use the HTTPS API: https://gops-api.yantralogic.com/api/v1{"\n"}
+            • If this shows a 192.168.x.x URL, rebuild the APK after updating EAS env values.{"\n"}
+            • For local development only, use a LAN URL with a development build.
           </Text>
           <TouchableOpacity
             onPress={() => {

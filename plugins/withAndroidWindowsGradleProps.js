@@ -6,9 +6,10 @@
 const { withGradleProperties } = require("@expo/config-plugins");
 
 const WIN32_PROPS = [
-  { key: "org.gradle.workers.max", value: "1" },
+  { key: "org.gradle.workers.max", value: "2" },
   { key: "org.gradle.vfs.watch", value: "false" },
-  { key: "kotlin.daemon.enabled", value: "false" },
+  // Keep Kotlin daemon enabled (default). Forcing false caused parallel-build flakes with Skia + Expo Kotlin.
+  { key: "org.gradle.configuration-cache", value: "false" },
 ];
 
 function upsertProperty(modResults, key, value) {
