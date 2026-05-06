@@ -1,5 +1,6 @@
 import { View, Text, StyleSheet } from "react-native";
 import { Building2, Navigation, UserRound } from "lucide-react-native";
+import { initialsFromName } from "@/utils/mapMarkerPhoto";
 
 const TYPE_ICON = {
   client: Building2,
@@ -7,20 +8,58 @@ const TYPE_ICON = {
   playback: Navigation,
 };
 
+/**
+ * MapLibre rasterizes PointAnnotation children; keep subtree tiny and stable:
+ * **Do not use Text** inside PointAnnotation on Android (maplibre-react-native glitches / blank map).
+ * Use view-only shapes; full names stay in parent UI (cards below / over the map).
+ */
 export default function MapMarkerPin({
   color = "#1A73E8",
   selected = false,
   type = "client",
   label,
   compact = false,
+  forMapLibre = false,
+  name = null,
 }) {
   const Icon = TYPE_ICON[type] || Building2;
   const pinSize = compact ? 36 : 42;
   const innerSize = compact ? 22 : 26;
 
+  const initials = initialsFromName(name);
+  const guardInitials = initials !== "?" ? initials : "·";
+
+  if (forMapLibre) {
+    const outer = compact ? 36 : 40;
+    const ringColor = selected ? "#F9AB00" : "#FFFFFF";
+    return (
+      <View style={[styles.mlRootPlain, { width: outer + 8, height: outer + 8 }]} collapsable={false}>
+        <View
+          style={[
+            styles.mlDiscPlainOuter,
+            {
+              width: outer,
+              height: outer,
+              borderRadius: outer / 2,
+              backgroundColor: color,
+              borderColor: ringColor,
+            },
+          ]}
+          collapsable={false}
+        >
+          {type === "client" ? (
+            <View style={styles.mlClientMark} collapsable={false} />
+          ) : (
+            <View style={styles.mlGuardMark} collapsable={false} />
+          )}
+        </View>
+      </View>
+    );
+  }
+
   return (
-    <View style={[styles.wrap, selected && styles.wrapSelected]}>
-      <View style={[styles.shadow, { width: pinSize, height: pinSize + 12 }]}>
+    <View style={[styles.wrap, selected && styles.wrapSelected]} collapsable={false}>
+      <View style={[styles.shadow, { width: pinSize, height: pinSize + 12 }]} collapsable={false}>
         <View
           style={[
             styles.tip,
@@ -30,6 +69,7 @@ export default function MapMarkerPin({
               borderColor: "#FFFFFF",
             },
           ]}
+          collapsable={false}
         />
         <View
           style={[
@@ -41,15 +81,28 @@ export default function MapMarkerPin({
               backgroundColor: color,
             },
           ]}
+          collapsable={false}
         >
-          <View style={[styles.iconDisc, { width: innerSize, height: innerSize, borderRadius: innerSize / 2 }]}>
+          <View
+            style={[
+              styles.iconDisc,
+              {
+                width: innerSize,
+                height: innerSize,
+                borderRadius: innerSize / 2,
+                overflow: "hidden",
+                backgroundColor: "#FFFFFF",
+              },
+            ]}
+            collapsable={false}
+          >
             <Icon size={compact ? 14 : 16} color={color} strokeWidth={2.6} />
           </View>
         </View>
       </View>
       {label ? (
-        <View style={styles.labelPill}>
-          <Text style={styles.labelText} numberOfLines={1}>
+        <View style={styles.namePopup} collapsable={false}>
+          <Text style={styles.namePopupText} numberOfLines={4}>
             {label}
           </Text>
         </View>
@@ -59,6 +112,29 @@ export default function MapMarkerPin({
 }
 
 const styles = StyleSheet.create({
+  mlRootPlain: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  mlDiscPlainOuter: {
+    borderWidth: 3,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  /** Square mark = site/client (no Text — Android PointAnnotation safe). */
+  mlClientMark: {
+    width: 11,
+    height: 11,
+    borderRadius: 2,
+    backgroundColor: "#FFFFFF",
+  },
+  /** Round mark = team/guard. */
+  mlGuardMark: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: "#FFFFFF",
+  },
   wrap: {
     alignItems: "center",
   },
@@ -94,23 +170,33 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "#FFFFFF",
   },
-  labelPill: {
+  namePopup: {
     position: "absolute",
-    bottom: 54,
-    maxWidth: 118,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 999,
-    backgroundColor: "rgba(255,255,255,0.94)",
-    shadowColor: "#1F2937",
-    shadowOpacity: 0.16,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 3,
+    bottom: 56,
+    maxWidth: 280,
+    minWidth: 72,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    backgroundColor: "rgba(255,255,255,0.97)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(0,0,0,0.12)",
+    shadowColor: "#000",
+    shadowOpacity: 0.22,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 8,
   },
-  labelText: {
+  namePopupText: {
     color: "#202124",
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: "700",
+    textAlign: "center",
+    lineHeight: 18,
+  },
+  initials: {
+    fontWeight: "800",
+    textAlign: "center",
+    includeFontPadding: false,
   },
 });

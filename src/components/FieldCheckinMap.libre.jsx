@@ -1,5 +1,5 @@
 import { useMemo, useEffect, useRef } from "react";
-import { View, StyleSheet } from "react-native";
+import { View, StyleSheet, InteractionManager } from "react-native";
 import {
   MapView as MLMapView,
   Camera,
@@ -101,19 +101,8 @@ export default function FieldCheckinMapLibre({
             animationMode: "moveTo",
           }}
         />
-        {/* Avoid the moving arrow/compass look — keep it as a simple blue dot. */}
+        {/* Single user layer — duplicate PointAnnotation + UserLocation on same coord caused white screen on tap. */}
         <UserLocation visible showsUserHeadingIndicator={false} androidRenderMode="normal" />
-
-        {userLoc ? (
-          <PointAnnotation
-            id={`user-location-${Math.round(userLoc.latitude * 100000)}-${Math.round(userLoc.longitude * 100000)}`}
-            coordinate={[userLoc.longitude, userLoc.latitude]}
-          >
-            <View style={styles.userDotOuter}>
-              <View style={styles.userDotInner} />
-            </View>
-          </PointAnnotation>
-        ) : null}
 
         {geofenceFill ? (
           <ShapeSource id="geofence" shape={geofenceFill}>
@@ -127,19 +116,22 @@ export default function FieldCheckinMapLibre({
         ) : null}
 
         {clients.map((c) => {
-          const selected = c.id === selectedClientId;
+          const selected = String(c.id) === String(selectedClientId);
           return Number.isFinite(c.latitude) && Number.isFinite(c.longitude) ? (
             <PointAnnotation
-              key={`${c.id}-${selected ? "selected" : "default"}`}
-              id={`${c.id}-${selected ? "selected" : "default"}`}
+              key={`field-client-${c.id}`}
+              id={`field-client-${c.id}`}
               coordinate={[c.longitude, c.latitude]}
-              onSelected={() => onSelectClient?.(c.id)}
+              onSelected={() => {
+                InteractionManager.runAfterInteractions(() => onSelectClient?.(c.id));
+              }}
             >
               <MapMarkerPin
                 type="client"
                 color={selected ? "#F9AB00" : "#EA4335"}
                 selected={selected}
-                label={selected ? c.clientName : undefined}
+                name={c.clientName}
+                forMapLibre
               />
             </PointAnnotation>
           ) : null;
@@ -148,23 +140,4 @@ export default function FieldCheckinMapLibre({
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  userDotOuter: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: "rgba(26,115,232,0.20)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  userDotInner: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: "#1A73E8",
-    borderWidth: 3,
-    borderColor: "#FFFFFF",
-  },
-});
 

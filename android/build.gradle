@@ -22,15 +22,3 @@ allprojects {
 
 apply plugin: "expo-root-project"
 apply plugin: "com.facebook.react.rootproject"
-
-// Third-party library lint during release often hits JVM Metaspace OOM; app module lint stays on.
-// withPlugin runs when the plugin is applied, or immediately if it is already applied (no afterEvaluate).
-subprojects { sub ->
-  sub.pluginManager.withPlugin("com.android.library") {
-    sub.android {
-      lint {
-        checkReleaseBuilds false
-      }
-    }
-  }
-}

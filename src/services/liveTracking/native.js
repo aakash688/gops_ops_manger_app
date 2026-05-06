@@ -33,9 +33,10 @@ export async function stopNativeTracking() {
   return NativeTracking.stopNativeTracking();
 }
 
-export async function syncNativeTrackingState() {
+/** Push session + JWT + API URL into native prefs and restart the foreground service. */
+export async function syncNativeTrackingStateWithConfig(config) {
   if (!isNativeTrackingAvailable()) return unavailableHealth();
-  return NativeTracking.syncNativeTrackingState();
+  return NativeTracking.syncNativeTrackingState(config);
 }
 
 export async function startComplianceAlarm(reason) {

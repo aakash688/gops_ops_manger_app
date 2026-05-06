@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { View, StyleSheet } from "react-native";
 import {
   MapView as MLMapView,
@@ -6,11 +6,22 @@ import {
   UserLocation,
   ShapeSource,
   LineLayer,
-  PointAnnotation,
+  Images,
+  SymbolLayer,
 } from "@maplibre/maplibre-react-native";
 import { getFieldMapStyle } from "@/config/fieldMapStyle";
-import MapMarkerPin from "@/components/MapMarkerPin";
 
+const MARKER_ASSETS = {
+  "marker-client": require("../../assets/map/marker-client.png"),
+  "marker-guard": require("../../assets/map/marker-guard.png"),
+  "marker-me": require("../../assets/map/marker-me.png"),
+  "marker-playback": require("../../assets/map/marker-playback.png"),
+};
+
+/**
+ * Live tracking map: markers are SymbolLayer + PNGs (MapLibre recommends this over PointAnnotation).
+ * PointAnnotation + RN views caused white-screen crashes on marker tap on Android.
+ */
 export default function TrackingMapLibre({
   outerStyle,
   cameraRef,
@@ -47,6 +58,131 @@ export default function TrackingMapLibre({
     };
   }, [routeCoords]);
 
+  const markerFeatureCollection = useMemo(() => {
+    const features = [];
+    const selC = selectedClientId != null ? String(selectedClientId) : "";
+    const selG = selectedGuardId != null ? String(selectedGuardId) : "";
+
+    for (const c of clients) {
+      if (!Number.isFinite(c.latitude) || !Number.isFinite(c.longitude)) continue;
+      const fid = String(c.id);
+      features.push({
+        type: "Feature",
+        properties: {
+          kind: "client",
+          fid,
+          iconKey: "marker-client",
+          sortKey: 3,
+          selected: fid === selC ? 1 : 0,
+        },
+        geometry: { type: "Point", coordinates: [c.longitude, c.latitude] },
+      });
+    }
+
+    for (const t of teamMarkers) {
+      if (!Number.isFinite(t.latitude) || !Number.isFinite(t.longitude)) continue;
+      const fid =
+        t.employeeId != null ? String(t.employeeId) : `noid-${t.latitude}-${t.longitude}`;
+      features.push({
+        type: "Feature",
+        properties: {
+          kind: "guard",
+          fid,
+          iconKey: "marker-guard",
+          sortKey: 4,
+          selected: fid === selG ? 1 : 0,
+        },
+        geometry: { type: "Point", coordinates: [t.longitude, t.latitude] },
+      });
+    }
+
+    if (
+      !showsUserLocation &&
+      userLoc &&
+      Number.isFinite(userLoc.latitude) &&
+      Number.isFinite(userLoc.longitude)
+    ) {
+      features.push({
+        type: "Feature",
+        properties: {
+          kind: "me",
+          fid: "me",
+          iconKey: "marker-me",
+          sortKey: 5,
+          selected: 0,
+        },
+        geometry: { type: "Point", coordinates: [userLoc.longitude, userLoc.latitude] },
+      });
+    }
+
+    if (
+      playbackCoord &&
+      Number.isFinite(playbackCoord.latitude) &&
+      Number.isFinite(playbackCoord.longitude)
+    ) {
+      features.push({
+        type: "Feature",
+        properties: {
+          kind: "playback",
+          fid: "playback",
+          iconKey: "marker-playback",
+          sortKey: 6,
+          selected: 0,
+        },
+        geometry: {
+          type: "Point",
+          coordinates: [playbackCoord.longitude, playbackCoord.latitude],
+        },
+      });
+    }
+
+    return { type: "FeatureCollection", features };
+  }, [
+    clients,
+    teamMarkers,
+    selectedClientId,
+    selectedGuardId,
+    userLoc,
+    showsUserLocation,
+    playbackCoord,
+  ]);
+
+  const markerSymbolStyle = useMemo(
+    () => ({
+      iconImage: ["get", "iconKey"],
+      iconAllowOverlap: true,
+      iconIgnorePlacement: true,
+      iconAnchor: "center",
+      symbolSortKey: ["get", "sortKey"],
+      iconSize: [
+        "case",
+        ["==", ["to-number", ["coalesce", ["get", "selected"], 0]], 1],
+        1.38,
+        ["==", ["get", "kind"], "playback"],
+        1.12,
+        ["==", ["get", "kind"], "me"],
+        1.08,
+        ["==", ["get", "kind"], "client"],
+        1.18,
+        1.0,
+      ],
+    }),
+    [],
+  );
+
+  const handleMarkerPress = useCallback(
+    (e) => {
+      const f = e.features?.[0];
+      const p = f?.properties;
+      if (!p) return;
+      const kind = String(p.kind ?? "");
+      const fid = p.fid != null ? String(p.fid) : "";
+      if (kind === "client") onSelectClient?.(fid);
+      else if (kind === "guard") onSelectGuard?.(fid);
+    },
+    [onSelectClient, onSelectGuard],
+  );
+
   useEffect(() => {
     centeredOnUserRef.current = false;
     didInitialCenterRef.current = false;
@@ -76,14 +212,19 @@ export default function TrackingMapLibre({
   ]);
 
   useEffect(() => {
-    if (!cameraRef.current) return;
-    if (!focusCoord) return;
-    cameraRef.current.setCamera({
-      centerCoordinate: [focusCoord.longitude, focusCoord.latitude],
-      zoomLevel: focusZoom,
-      animationDuration: 500,
-      animationMode: "flyTo",
-    });
+    if (!cameraRef.current || !focusCoord) return;
+    const lat = Number(focusCoord.latitude);
+    const lng = Number(focusCoord.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    const id = setTimeout(() => {
+      cameraRef.current?.setCamera({
+        centerCoordinate: [lng, lat],
+        zoomLevel: focusZoom,
+        animationDuration: 0,
+        animationMode: "moveTo",
+      });
+    }, 150);
+    return () => clearTimeout(id);
   }, [focusCoord?.latitude, focusCoord?.longitude, focusZoom, cameraRef]);
 
   useEffect(() => {
@@ -99,6 +240,8 @@ export default function TrackingMapLibre({
       animationMode: "flyTo",
     });
   }, [centerOnUser, userLoc?.latitude, userLoc?.longitude, fullScreen, cameraRef, centerMapEpoch]);
+
+  const hasMarkers = markerFeatureCollection.features.length > 0;
 
   return (
     <View style={[{ overflow: "hidden" }, outerStyle]}>
@@ -123,21 +266,10 @@ export default function TrackingMapLibre({
           <UserLocation visible showsUserHeadingIndicator={false} androidRenderMode="normal" />
         ) : null}
 
-        {userLoc && Number.isFinite(userLoc.latitude) && Number.isFinite(userLoc.longitude) ? (
-          <PointAnnotation
-            id={`lt-user-${Math.round(userLoc.latitude * 100000)}-${Math.round(userLoc.longitude * 100000)}`}
-            coordinate={[userLoc.longitude, userLoc.latitude]}
-          >
-            <View style={styles.userDotOuter}>
-              <View style={styles.userDotInner} />
-            </View>
-          </PointAnnotation>
-        ) : null}
-
         {routeFeature ? (
-          <ShapeSource id="route" shape={routeFeature}>
+          <ShapeSource id="gops-route" shape={routeFeature}>
             <LineLayer
-              id="route-line"
+              id="gops-route-line"
               style={{
                 lineColor: "#1A73E8",
                 lineWidth: 4,
@@ -149,89 +281,20 @@ export default function TrackingMapLibre({
           </ShapeSource>
         ) : null}
 
-        {/* Client site markers — identical to FieldCheckinMap */}
-        {clients.map((c) => {
-          const sel = c.id === selectedClientId;
-          return Number.isFinite(c.latitude) && Number.isFinite(c.longitude) ? (
-            <PointAnnotation
-              key={`client-${c.id}-${sel ? "sel" : "def"}`}
-              id={`client-${c.id}-${sel ? "sel" : "def"}`}
-              coordinate={[c.longitude, c.latitude]}
-              onSelected={() => onSelectClient?.(c.id)}
+        {hasMarkers ? (
+          <>
+            <Images id="gops-live-marker-images" images={MARKER_ASSETS} />
+            <ShapeSource
+              id="gops-live-markers"
+              shape={markerFeatureCollection}
+              onPress={handleMarkerPress}
+              hitbox={{ width: 56, height: 56 }}
             >
-              <MapMarkerPin
-                type="client"
-                color={sel ? "#F9AB00" : "#EA4335"}
-                selected={sel}
-                label={sel ? c.clientName : undefined}
-              />
-            </PointAnnotation>
-          ) : null;
-        })}
-
-        {/* Team / guard markers */}
-        {teamMarkers.map((t) => {
-          const sel = t.employeeId === selectedGuardId;
-          return Number.isFinite(t.latitude) && Number.isFinite(t.longitude) ? (
-            <PointAnnotation
-              key={`guard-${t.employeeId ?? `${t.latitude},${t.longitude}`}-${sel ? "sel" : "def"}`}
-              id={String(`guard-${t.employeeId ?? `${t.latitude},${t.longitude}`}-${sel ? "sel" : "def"}`)}
-              coordinate={[t.longitude, t.latitude]}
-              onSelected={() => onSelectGuard?.(t.employeeId)}
-            >
-              <MapMarkerPin
-                type="guard"
-                color={sel ? "#F9AB00" : (t.pinColor || "#1A73E8")}
-                selected={sel}
-                label={t.employeeName}
-              />
-            </PointAnnotation>
-          ) : null;
-        })}
-
-        {playbackCoord ? (
-          <PointAnnotation id="playback" coordinate={[playbackCoord.longitude, playbackCoord.latitude]}>
-            <View style={styles.playbackDotOuter}>
-              <View style={styles.playbackDotInner} />
-            </View>
-          </PointAnnotation>
+              <SymbolLayer id="gops-live-markers-symbol" style={markerSymbolStyle} />
+            </ShapeSource>
+          </>
         ) : null}
       </MLMapView>
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  userDotOuter: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: "rgba(26,115,232,0.20)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  userDotInner: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: "#1A73E8",
-    borderWidth: 3,
-    borderColor: "#FFFFFF",
-  },
-  playbackDotOuter: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: "rgba(251,140,0,0.25)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  playbackDotInner: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: "#FB8C00",
-    borderWidth: 3,
-    borderColor: "#FFFFFF",
-  },
-});

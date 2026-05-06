@@ -7,13 +7,13 @@ import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.core.app.NotificationManagerCompat
+import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.ReadableMap
 import com.facebook.react.bridge.WritableMap
-import com.facebook.react.bridge.Arguments
 
 class GopsTrackingModule(private val reactContext: ReactApplicationContext) :
   ReactContextBaseJavaModule(reactContext) {
@@ -29,14 +29,7 @@ class GopsTrackingModule(private val reactContext: ReactApplicationContext) :
         return
       }
       GopsTrackingPrefs.save(reactContext, config)
-      val intent = Intent(reactContext, GopsTrackingService::class.java).apply {
-        action = GopsTrackingService.ACTION_START
-      }
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        reactContext.startForegroundService(intent)
-      } else {
-        reactContext.startService(intent)
-      }
+      startSvc()
       promise.resolve(buildHealthMap(reactContext))
     } catch (e: Exception) {
       promise.reject("E_NATIVE_TRACKING", e.message, e)
@@ -55,18 +48,14 @@ class GopsTrackingModule(private val reactContext: ReactApplicationContext) :
   }
 
   @ReactMethod
-  fun syncNativeTrackingState(promise: Promise) {
+  fun syncNativeTrackingState(config: ReadableMap, promise: Promise) {
     try {
-      if (GopsTrackingPrefs.sessionId(reactContext) != null) {
-        val intent = Intent(reactContext, GopsTrackingService::class.java).apply {
-          action = GopsTrackingService.ACTION_START
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-          reactContext.startForegroundService(intent)
-        } else {
-          reactContext.startService(intent)
-        }
+      if (GopsTrackingPrefs.sessionId(reactContext) == null) {
+        promise.resolve(buildHealthMap(reactContext))
+        return
       }
+      GopsTrackingPrefs.merge(reactContext, config)
+      startSvc()
       promise.resolve(buildHealthMap(reactContext))
     } catch (e: Exception) {
       promise.reject("E_NATIVE_TRACKING", e.message, e)
@@ -114,7 +103,6 @@ class GopsTrackingModule(private val reactContext: ReactApplicationContext) :
   @ReactMethod
   fun startComplianceAlarm(reason: String?, promise: Promise) {
     try {
-      ComplianceAlarmActivity.show(reactContext.applicationContext, reason ?: "compliance")
       promise.resolve(true)
     } catch (e: Exception) {
       promise.reject("E_ALARM", e.message, e)
@@ -124,10 +112,20 @@ class GopsTrackingModule(private val reactContext: ReactApplicationContext) :
   @ReactMethod
   fun stopComplianceAlarm(promise: Promise) {
     try {
-      reactContext.sendBroadcast(Intent(ComplianceAlarmActivity.ACTION_STOP))
       promise.resolve(true)
     } catch (e: Exception) {
       promise.reject("E_ALARM", e.message, e)
+    }
+  }
+
+  private fun startSvc() {
+    val intent = Intent(reactContext, GopsTrackingService::class.java).apply {
+      action = GopsTrackingService.ACTION_START
+    }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      reactContext.startForegroundService(intent)
+    } else {
+      reactContext.startService(intent)
     }
   }
 
@@ -175,7 +173,7 @@ class GopsTrackingModule(private val reactContext: ReactApplicationContext) :
           true
         }
       map.putBoolean("batteryOptimizationIgnored", ignoring)
-      map.putNull("lastPingAt")
+      map.putString("lastPingAt", GopsTrackingPrefs.lastPingAtIso(ctx))
       map.putString("lastComplianceReason", GopsTrackingService.lastComplianceReason)
       map.putInt("queuedPingCount", 0)
       map.putInt("queuedComplianceCount", 0)

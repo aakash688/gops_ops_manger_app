@@ -1,6 +1,7 @@
 import { Platform } from "react-native";
 import * as FileSystem from "expo-file-system";
 
+// Keep in sync with Android `res/raw/gops_alarm_clock.ogg` (duty notification sound).
 const REMOTE_SIREN_URL = "https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg";
 const LOCAL_NAME = "gops_siren_alarm.ogg";
 

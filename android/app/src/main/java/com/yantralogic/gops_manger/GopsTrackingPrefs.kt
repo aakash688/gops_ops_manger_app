@@ -11,12 +11,33 @@ object GopsTrackingPrefs {
   private const val KEY_TOKEN = "token"
   private const val KEY_INTERVAL = "pingIntervalSec"
   private const val KEY_EMPLOYEE = "employeeId"
+  private const val KEY_LAST_PING = "lastPingAtMs"
 
   fun save(ctx: Context, config: ReadableMap) {
     val sp = ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-    if (config.hasKey("sessionId")) sp.putString(KEY_SESSION, config.getString("sessionId"))
-    if (config.hasKey("apiBaseUrl")) sp.putString(KEY_API, config.getString("apiBaseUrl"))
-    if (config.hasKey("token")) sp.putString(KEY_TOKEN, config.getString("token"))
+    putAll(sp, config)
+    sp.apply()
+  }
+
+  fun merge(ctx: Context, config: ReadableMap) {
+    val sp = ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+    putAll(sp, config)
+    sp.apply()
+  }
+
+  private fun putAll(
+    sp: android.content.SharedPreferences.Editor,
+    config: ReadableMap,
+  ) {
+    if (config.hasKey("sessionId") && !config.isNull("sessionId")) {
+      sp.putString(KEY_SESSION, config.getString("sessionId"))
+    }
+    if (config.hasKey("apiBaseUrl") && !config.isNull("apiBaseUrl")) {
+      sp.putString(KEY_API, config.getString("apiBaseUrl"))
+    }
+    if (config.hasKey("token") && !config.isNull("token")) {
+      sp.putString(KEY_TOKEN, config.getString("token"))
+    }
     if (config.hasKey("pingIntervalSec") && !config.isNull("pingIntervalSec")) {
       val v =
         when (config.getType("pingIntervalSec")) {
@@ -30,7 +51,6 @@ object GopsTrackingPrefs {
     if (config.hasKey("employeeId") && !config.isNull("employeeId")) {
       sp.putString(KEY_EMPLOYEE, config.getString("employeeId"))
     }
-    sp.apply()
   }
 
   fun clear(ctx: Context) {
@@ -39,4 +59,28 @@ object GopsTrackingPrefs {
 
   fun sessionId(ctx: Context): String? =
     ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_SESSION, null)
+
+  fun apiBaseUrl(ctx: Context): String =
+    ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_API, "") ?: ""
+
+  fun token(ctx: Context): String? =
+    ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_TOKEN, null)
+
+  fun pingIntervalSec(ctx: Context): Int =
+    ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_INTERVAL, 90)
+
+  fun markPingSuccess(ctx: Context) {
+    ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+      .putLong(KEY_LAST_PING, System.currentTimeMillis())
+      .apply()
+  }
+
+  fun lastPingAtIso(ctx: Context): String? {
+    val t =
+      ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getLong(KEY_LAST_PING, 0L)
+    if (t <= 0L) return null
+    return java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).apply {
+      timeZone = java.util.TimeZone.getTimeZone("UTC")
+    }.format(java.util.Date(t))
+  }
 }

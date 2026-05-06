@@ -9,6 +9,7 @@ import {
   StyleSheet,
   Platform,
   Dimensions,
+  InteractionManager,
 } from "react-native";
 import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect";
 import {
@@ -542,7 +543,7 @@ export default function LiveTrackingScreen() {
   const teamMarkers = useMemo(
     () => team.map((t) => ({
       employeeId: t.employeeId,
-      employeeName: t.employeeName,
+      employeeName: t.employeeName ?? t.name ?? t.employee?.name ?? "",
       latitude: t.latitude,
       longitude: t.longitude,
       subtitle: `${formatAgo(t.trackedAt)}${t.sessionOpen ? " · live session" : ""}`,
@@ -551,43 +552,51 @@ export default function LiveTrackingScreen() {
     [team],
   );
 
-  const focusCoord = selectedTarget
-    ? { latitude: Number(selectedTarget.latitude), longitude: Number(selectedTarget.longitude) }
-    : null;
+  const focusCoord = useMemo(() => {
+    if (!selectedTarget) return null;
+    const lat = Number(selectedTarget.latitude);
+    const lng = Number(selectedTarget.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return { latitude: lat, longitude: lng };
+  }, [selectedTarget]);
 
   const selectedClientId = selectedTarget?.type === "client" ? String(selectedTarget.id) : null;
   const selectedGuardId = selectedTarget?.type === "team" ? String(selectedTarget.id) : null;
 
   const handleSelectClient = useCallback((clientId) => {
-    const c = clients.find((x) => x.id === clientId);
-    if (!c) return;
-    setSelectedTarget({
-      type: "client",
-      id: c.id,
-      name: c.clientName,
-      subtitle: [c.deploymentAddress, c.city].filter(Boolean).join(", ") || "Site",
-      latitude: c.latitude,
-      longitude: c.longitude,
-      extra: { address: c.deploymentAddress ?? null, city: c.city ?? null },
+    InteractionManager.runAfterInteractions(() => {
+      const c = clients.find((x) => String(x.id) === String(clientId));
+      if (!c) return;
+      setSelectedTarget({
+        type: "client",
+        id: c.id,
+        name: c.clientName,
+        subtitle: [c.deploymentAddress, c.city].filter(Boolean).join(", ") || "Site",
+        latitude: c.latitude,
+        longitude: c.longitude,
+        extra: { address: c.deploymentAddress ?? null, city: c.city ?? null },
+      });
     });
   }, [clients]);
 
   const handleSelectGuard = useCallback((guardEmployeeId) => {
-    const t = team.find((x) => x.employeeId === guardEmployeeId);
-    if (!t) return;
-    setSelectedTarget({
-      type: "team",
-      id: t.employeeId,
-      name: t.employeeName,
-      subtitle: formatAgo(t.trackedAt),
-      latitude: t.latitude,
-      longitude: t.longitude,
-      extra: {
-        trackedAt: t.trackedAt ?? null,
-        batteryLevel: t.batteryLevel ?? null,
-        sessionOpen: t.sessionOpen ?? false,
-        networkType: t.networkType ?? null,
-      },
+    InteractionManager.runAfterInteractions(() => {
+      const t = team.find((x) => String(x.employeeId) === String(guardEmployeeId));
+      if (!t) return;
+      setSelectedTarget({
+        type: "team",
+        id: t.employeeId,
+        name: t.employeeName,
+        subtitle: formatAgo(t.trackedAt),
+        latitude: t.latitude,
+        longitude: t.longitude,
+        extra: {
+          trackedAt: t.trackedAt ?? null,
+          batteryLevel: t.batteryLevel ?? null,
+          sessionOpen: t.sessionOpen ?? false,
+          networkType: t.networkType ?? null,
+        },
+      });
     });
   }, [team]);
 

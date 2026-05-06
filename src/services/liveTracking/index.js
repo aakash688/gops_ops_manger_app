@@ -26,7 +26,7 @@ import { apiPostJson, apiGetJson, getApiBaseUrl } from "@/utils/api";
 import {
   startNativeTracking,
   stopNativeTracking,
-  syncNativeTrackingState,
+  syncNativeTrackingStateWithConfig,
   getNativeTrackingHealth,
   isNativeTrackingAvailable,
   openBatteryOptimizationSettings,
@@ -260,6 +260,12 @@ export async function startLiveTracking(opts = {}) {
     pingIntervalSec,
   }).catch(() => {});
 
+  const useAndroidNative = Platform.OS === "android" && isNativeTrackingAvailable();
+  if (useAndroidNative) {
+    await flushPingQueue();
+    return { sessionId, pingIntervalSec };
+  }
+
   const isTaskDefined = TaskManager.isTaskDefined(LIVE_TRACKING_TASK);
   if (!isTaskDefined) {
     throw new Error("Live tracking task is not registered.");
@@ -352,6 +358,10 @@ export async function resumeLiveTrackingIfNeeded() {
     pingIntervalSec,
   }).catch(() => {});
 
+  if (Platform.OS === "android" && isNativeTrackingAvailable()) {
+    return;
+  }
+
   try {
     const already = await Location.hasStartedLocationUpdatesAsync(LIVE_TRACKING_TASK);
     if (already) return;
@@ -425,5 +435,20 @@ export async function syncLiveTrackingWithFieldSession() {
   }
 }
 
+/** Refreshes native prefs (JWT, API URL) and restarts the Android foreground tracking service. */
+export async function syncNativeTrackingState() {
+  if (Platform.OS === "web" || !isNativeTrackingAvailable()) return;
+  const sessionId = await getSessionId();
+  if (!sessionId) return;
+  const auth = useAuthStore.getState?.().auth;
+  await syncNativeTrackingStateWithConfig({
+    sessionId,
+    apiBaseUrl: getApiBaseUrl(),
+    token: auth?.jwt ?? null,
+    pingIntervalSec: await getPingIntervalSec(),
+    employeeId: auth?.user?.employeeId ?? null,
+  }).catch(() => {});
+}
+
 export { getSessionId } from "./storage";
-export { syncNativeTrackingState, openBatteryOptimizationSettings };
+export { openBatteryOptimizationSettings } from "./native";
