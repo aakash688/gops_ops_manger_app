@@ -1,5 +1,19 @@
 <resources>
   <string name="app_name">G-OPS Manger</string>
+  <string name="gops_notif_channel_tracking">Live tracking</string>
+  <string name="gops_notif_channel_alert">Compliance alerts</string>
+  <string name="gops_notif_channel_alert_desc">Location and connectivity issues during duty</string>
+  <string name="gops_notif_tracking_title">Live tracking on</string>
+  <string name="gops_notif_tracking_body">Compliance monitoring is active in the background.</string>
+  <string name="gops_breach_perm_title">Location access required</string>
+  <string name="gops_breach_perm_body">Allow location for G-OPS (including background) so duty tracking can continue.</string>
+  <string name="gops_breach_gps_title">Location services off</string>
+  <string name="gops_breach_gps_body">Turn on GPS / location in device settings.</string>
+  <string name="gops_breach_net_title">No data connection</string>
+  <string name="gops_breach_net_body">Turn on Wi‑Fi or mobile data so tracking can sync.</string>
+  <string name="gops_alarm_title">Tracking disabled</string>
+  <string name="gops_alarm_body">Fix location or network. This screen closes automatically when tracking can resume.</string>
+  <string name="gops_alarm_footer">Audio and vibration stop when the issue is resolved.</string>
   <string name="expo_system_ui_user_interface_style" translatable="false">automatic</string>
   <string name="expo_splash_screen_resize_mode" translatable="false">contain</string>
   <string name="expo_splash_screen_status_bar_translucent" translatable="false">false</string>

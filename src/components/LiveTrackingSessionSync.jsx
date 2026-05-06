@@ -14,14 +14,15 @@ import {
   getSessionId,
 } from "@/services/liveTracking";
 import LiveTrackingComplianceOverlay from "@/components/LiveTrackingComplianceOverlay";
+import BatteryOptimizationGate from "@/components/BatteryOptimizationGate";
 
 /** Field check-in drives live tracking; syncs with server on launch/resume, flushes pings, optional kiosk. */
 export default function LiveTrackingSessionSync({ children }) {
   const jwt = useAuthStore((s) => s.auth?.jwt);
   const batteryTipShown = useRef(false);
-  const batterySettingsShown = useRef(false);
   const notificationPermissionAsked = useRef(false);
   const [trackingActive, setTrackingActive] = useState(false);
+  const [batteryUnrestricted, setBatteryUnrestricted] = useState(true);
 
   useEffect(() => {
     if (Platform.OS === "web" || !jwt) {
@@ -59,6 +60,11 @@ export default function LiveTrackingSessionSync({ children }) {
     const sub = AppState.addEventListener("change", (state) => {
       if (state === "active") {
         runSyncAndFlush();
+        getLiveTrackingHealth()
+          .then((h) => {
+            if (h) setBatteryUnrestricted(h.batteryOptimizationIgnored !== false);
+          })
+          .catch(() => {});
       }
     });
 
@@ -104,23 +110,8 @@ export default function LiveTrackingSessionSync({ children }) {
           await Notifications.requestPermissionsAsync().catch(() => {});
         }
 
-        if (
-          health &&
-          health.batteryOptimizationIgnored === false &&
-          !batterySettingsShown.current
-        ) {
-          batterySettingsShown.current = true;
-          Alert.alert(
-            "Allow unrestricted battery",
-            "For reliable live tracking after the app is closed or removed from recents, allow unrestricted battery usage for G-OPS.",
-            [
-              { text: "Later", style: "cancel" },
-              {
-                text: "Open settings",
-                onPress: () => openBatteryOptimizationSettings().catch(() => {}),
-              },
-            ],
-          );
+        if (health) {
+          setBatteryUnrestricted(health.batteryOptimizationIgnored !== false);
         }
       } catch {
         /* ignore */
@@ -142,11 +133,18 @@ export default function LiveTrackingSessionSync({ children }) {
     return () => sub.remove();
   }, [jwt]);
 
+  const showBatteryGate =
+    Platform.OS === "android" && !!jwt && trackingActive && !batteryUnrestricted;
+
   return (
     <>
       {children}
+      <BatteryOptimizationGate
+        visible={showBatteryGate}
+        onOpenSettings={() => openBatteryOptimizationSettings().catch(() => {})}
+      />
       {jwt && Platform.OS !== "web" ? (
-        <LiveTrackingComplianceOverlay trackingActive={trackingActive} />
+        <LiveTrackingComplianceOverlay trackingActive={trackingActive && !showBatteryGate} />
       ) : null}
     </>
   );
