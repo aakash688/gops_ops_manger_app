@@ -10,13 +10,11 @@ import {
   SymbolLayer,
 } from "@maplibre/maplibre-react-native";
 import { getFieldMapStyle } from "@/config/fieldMapStyle";
-
-const MARKER_ASSETS = {
-  "marker-client": require("../../assets/map/marker-client.png"),
-  "marker-guard": require("../../assets/map/marker-guard.png"),
-  "marker-me": require("../../assets/map/marker-me.png"),
-  "marker-playback": require("../../assets/map/marker-playback.png"),
-};
+import {
+  MAP_LIBRE_LIVE_MARKER_ASSETS,
+  getMapLibreMarkerImagesId,
+  getMapLibreLiveMarkerSymbolLayerStyle,
+} from "@/config/mapLibreMarkerSprites";
 
 /**
  * Live tracking map: markers are SymbolLayer + PNGs (MapLibre recommends this over PointAnnotation).
@@ -35,7 +33,6 @@ export default function TrackingMapLibre({
   routeCoords,
   playbackCoord,
   focusCoord,
-  focusZoom = 14,
   initialCenter,
   fullScreen,
   userLoc = null,
@@ -147,24 +144,26 @@ export default function TrackingMapLibre({
     playbackCoord,
   ]);
 
-  const markerSymbolStyle = useMemo(
+  const markerSymbolStyle = useMemo(() => getMapLibreLiveMarkerSymbolLayerStyle(), []);
+
+  const routeLineStyle = useMemo(
     () => ({
-      iconImage: ["get", "iconKey"],
-      iconAllowOverlap: true,
-      iconIgnorePlacement: true,
-      iconAnchor: "center",
-      symbolSortKey: ["get", "sortKey"],
-      iconSize: [
-        "case",
-        ["==", ["to-number", ["coalesce", ["get", "selected"], 0]], 1],
-        1.38,
-        ["==", ["get", "kind"], "playback"],
-        1.12,
-        ["==", ["get", "kind"], "me"],
-        1.08,
-        ["==", ["get", "kind"], "client"],
-        1.18,
-        1.0,
+      lineColor: "#1A73E8",
+      lineOpacity: 0.92,
+      lineCap: "round",
+      lineJoin: "round",
+      lineWidth: [
+        "interpolate",
+        ["linear"],
+        ["zoom"],
+        8,
+        2,
+        12,
+        3.2,
+        15,
+        4.2,
+        18,
+        5.2,
       ],
     }),
     [],
@@ -217,15 +216,15 @@ export default function TrackingMapLibre({
     const lng = Number(focusCoord.longitude);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
     const id = setTimeout(() => {
+      // Pan only — omit zoomLevel so pinch zoom is preserved (previously forced focusZoom ≈ 14 and felt like zoom-out).
       cameraRef.current?.setCamera({
         centerCoordinate: [lng, lat],
-        zoomLevel: focusZoom,
         animationDuration: 0,
         animationMode: "moveTo",
       });
     }, 150);
     return () => clearTimeout(id);
-  }, [focusCoord?.latitude, focusCoord?.longitude, focusZoom, cameraRef]);
+  }, [focusCoord?.latitude, focusCoord?.longitude, cameraRef]);
 
   useEffect(() => {
     if (!centerOnUser) return;
@@ -268,22 +267,13 @@ export default function TrackingMapLibre({
 
         {routeFeature ? (
           <ShapeSource id="gops-route" shape={routeFeature}>
-            <LineLayer
-              id="gops-route-line"
-              style={{
-                lineColor: "#1A73E8",
-                lineWidth: 4,
-                lineOpacity: 0.92,
-                lineCap: "round",
-                lineJoin: "round",
-              }}
-            />
+            <LineLayer id="gops-route-line" style={routeLineStyle} />
           </ShapeSource>
         ) : null}
 
         {hasMarkers ? (
           <>
-            <Images id="gops-live-marker-images" images={MARKER_ASSETS} />
+            <Images id={getMapLibreMarkerImagesId()} images={MAP_LIBRE_LIVE_MARKER_ASSETS} />
             <ShapeSource
               id="gops-live-markers"
               shape={markerFeatureCollection}

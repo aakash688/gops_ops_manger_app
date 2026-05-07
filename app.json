@@ -73,6 +73,7 @@
       "reactCompiler": true
     },
     "extra": {
+      "mapMarkerAssetRevision": 1,
       "router": {
         "origin": false,
         "sitemap": false

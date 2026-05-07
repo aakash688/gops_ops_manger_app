@@ -1,15 +1,20 @@
-import { useMemo, useEffect, useRef } from "react";
-import { View, StyleSheet, InteractionManager } from "react-native";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { View, StyleSheet } from "react-native";
 import {
   MapView as MLMapView,
   Camera,
   UserLocation,
-  PointAnnotation,
   ShapeSource,
   FillLayer,
+  Images,
+  SymbolLayer,
 } from "@maplibre/maplibre-react-native";
 import { getFieldMapStyle } from "@/config/fieldMapStyle";
-import MapMarkerPin from "@/components/MapMarkerPin";
+import {
+  MAP_LIBRE_LIVE_MARKER_ASSETS,
+  getMapLibreMarkerImagesId,
+  getMapLibreLiveMarkerSymbolLayerStyle,
+} from "@/config/mapLibreMarkerSprites";
 
 function geofencePolygonRing(lat, lng, radiusM, steps = 72) {
   const R = 6371000;
@@ -32,7 +37,7 @@ function geofencePolygonRing(lat, lng, radiusM, steps = 72) {
   return ring;
 }
 
-/** MapLibre path — only required when native MLRNModule is linked (custom dev build). */
+/** MapLibre path — same marker sprites as live tracking (SymbolLayer + PNGs, not PointAnnotation). */
 export default function FieldCheckinMapLibre({
   clients,
   selectedClientId,
@@ -67,6 +72,42 @@ export default function FieldCheckinMapLibre({
     };
   }, [geofenceCenter, geofenceRadiusM]);
 
+  const clientMarkerCollection = useMemo(() => {
+    const sel = selectedClientId != null ? String(selectedClientId) : "";
+    const features = [];
+    for (const c of clients) {
+      if (!Number.isFinite(c.latitude) || !Number.isFinite(c.longitude)) continue;
+      const fid = String(c.id);
+      features.push({
+        type: "Feature",
+        properties: {
+          kind: "client",
+          fid,
+          iconKey: "marker-client",
+          sortKey: 3,
+          selected: fid === sel ? 1 : 0,
+        },
+        geometry: { type: "Point", coordinates: [c.longitude, c.latitude] },
+      });
+    }
+    return { type: "FeatureCollection", features };
+  }, [clients, selectedClientId]);
+
+  const markerSymbolStyle = useMemo(() => getMapLibreLiveMarkerSymbolLayerStyle(), []);
+
+  const handleClientMarkerPress = useCallback(
+    (e) => {
+      const f = e.features?.[0];
+      const p = f?.properties;
+      if (!p || String(p.kind ?? "") !== "client") return;
+      const fid = p.fid != null ? String(p.fid) : "";
+      if (!fid) return;
+      const match = clients.find((c) => String(c.id) === fid);
+      if (match) onSelectClient?.(match.id);
+    },
+    [onSelectClient, clients],
+  );
+
   useEffect(() => {
     if (centeredOnUserRef.current) return;
     if (!centerOnUser) return;
@@ -80,8 +121,7 @@ export default function FieldCheckinMapLibre({
     });
   }, [centerOnUser, userLoc?.latitude, userLoc?.longitude, fullScreen, cameraRef]);
 
-  // We render individual site pins to match the old "marker pin" UX.
-  // Clustering can be reintroduced later if needed.
+  const hasClientMarkers = clientMarkerCollection.features.length > 0;
 
   return (
     <View style={[{ overflow: "hidden" }, outerStyle]}>
@@ -101,7 +141,6 @@ export default function FieldCheckinMapLibre({
             animationMode: "moveTo",
           }}
         />
-        {/* Single user layer — duplicate PointAnnotation + UserLocation on same coord caused white screen on tap. */}
         <UserLocation visible showsUserHeadingIndicator={false} androidRenderMode="normal" />
 
         {geofenceFill ? (
@@ -115,29 +154,20 @@ export default function FieldCheckinMapLibre({
           </ShapeSource>
         ) : null}
 
-        {clients.map((c) => {
-          const selected = String(c.id) === String(selectedClientId);
-          return Number.isFinite(c.latitude) && Number.isFinite(c.longitude) ? (
-            <PointAnnotation
-              key={`field-client-${c.id}`}
-              id={`field-client-${c.id}`}
-              coordinate={[c.longitude, c.latitude]}
-              onSelected={() => {
-                InteractionManager.runAfterInteractions(() => onSelectClient?.(c.id));
-              }}
+        {hasClientMarkers ? (
+          <>
+            <Images id={getMapLibreMarkerImagesId()} images={MAP_LIBRE_LIVE_MARKER_ASSETS} />
+            <ShapeSource
+              id="field-checkin-markers"
+              shape={clientMarkerCollection}
+              onPress={handleClientMarkerPress}
+              hitbox={{ width: 56, height: 56 }}
             >
-              <MapMarkerPin
-                type="client"
-                color={selected ? "#F9AB00" : "#EA4335"}
-                selected={selected}
-                name={c.clientName}
-                forMapLibre
-              />
-            </PointAnnotation>
-          ) : null;
-        })}
+              <SymbolLayer id="field-checkin-markers-symbol" style={markerSymbolStyle} />
+            </ShapeSource>
+          </>
+        ) : null}
       </MLMapView>
     </View>
   );
 }
-

@@ -33,7 +33,6 @@ export default function TrackingMap({
   routeCoords = [],
   playbackCoord = null,
   focusCoord = null,
-  focusZoom = 14,
   initialCenter = { latitude: 20.5937, longitude: 78.9629 },
   userLoc = null,
   centerOnUser = true,
@@ -92,7 +91,6 @@ export default function TrackingMap({
       routeCoords={routeCoords}
       playbackCoord={playbackCoord}
       focusCoord={focusCoord}
-      focusZoom={focusZoom}
       initialCenter={computedInitial}
       fullScreen={fullScreen}
       userLoc={userLoc}

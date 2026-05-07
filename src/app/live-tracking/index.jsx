@@ -33,6 +33,7 @@ import {
   Building2,
   UserRound,
   Crosshair,
+  ExternalLink,
 } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
